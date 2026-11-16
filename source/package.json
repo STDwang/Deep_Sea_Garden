@@ -1,5 +1,5 @@
 {
-  "name": "abyssal-garden",
+  "name": "deep-sea-garden",
   "private": true,
   "description": "A procedural underwater world rendered with WebGPU, bundled into one HTML file",
   "type": "module",

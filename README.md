@@ -92,8 +92,6 @@ npm run build
 - **亮度和光柱：** `main.js` 中的 `EXPO` 和 `RAYS`
 - **游动速度：** 在 `main.js` 中搜索 `26 : 7`（快速 : 正常速度）
 
-## 来源与许可
+## 许可
 
-本项目基于 [Noniv/abyssal-garden](https://github.com/Noniv/abyssal-garden) 的中文改造版，原作者 Maksymilian Dendra，原项目采用 MIT 许可（© 2026）。详见 [ATTRIBUTION.md](ATTRIBUTION.md) 与 [LICENSE](LICENSE)。
-
-以 MIT 许可发布：可自由使用、修改和分享，包括用在你自己的项目中；请保留原作者署名。
+以 MIT 许可发布：可自由使用、修改和分享，包括用在你自己的项目中。
