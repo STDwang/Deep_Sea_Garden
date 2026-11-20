@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
+    "build:xhs": "node build-xhs.mjs",
     "build:readable": "node build.mjs --readable",
     "build:dev": "node build.mjs --dev"
   },

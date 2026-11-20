@@ -1,11 +1,14 @@
 // ============================================================================
 // development tools: only in dev.html (npm run build:dev), never in index.html
 // ============================================================================
-//   F    fly the camera along the scripted path (FLY in main.js), one minute through the whole world
+//   G    fly the camera along the scripted path (FLY in main.js), one minute through the whole world
 //   B    the same flight as a benchmark: the resolution stays fixed, every frame is timed, the result is shown at the end
-//   F, B or 1-6 during a flight stop it
+//   G, B or 1-6 during a flight stop it
 {
+  const spot = new URLSearchParams(location.search).get('spot');
+  if (/^[1-8]$/.test(spot)) visitSpot(Number(spot) - 1);
   const LOGN = 1 << 16, logFrame = new Float32Array(LOGN), logGpu = new Float32Array(LOGN);
+  const playerView = new Float64Array(5), playerCamera = new Float64Array(3);
   let flying = false, bench = false, last = 0, nFrame = 0, nGpu = 0;
   const stop = () => { flying = bench = false; dynT = 0; };
   const report = () => {
@@ -17,23 +20,30 @@
   // frame() moves the free camera and then calls render(): step in between and put the camera on the path instead
   const draw = render;
   render = () => {
-    if (flying) {
-      const dtr = F[LAST] - last; last = F[LAST];
-      F[FLT] += min(dtr / 1000, 0.1); flyAt();
-      if (bench) { if (nFrame < LOGN) logFrame[nFrame++] = dtr; if (F[GPU] > 0 && nGpu < LOGN) logGpu[nGpu++] = F[GPU]; }
-      if (F[FLT] >= FLYT) { if (bench) report(); stop(); }
-    }
+    if (!flying) return draw();
+    const dtr = F[LAST] - last; last = F[LAST];
+    const third = diver.view;
+    for (let i = 0; i < playerView.length; i++) playerView[i] = F[i];
+    playerCamera.set(RC);
+    F[FLT] += min(dtr / 1000, 0.1); flyAt();
+    RC[0] = F[CX]; RC[1] = F[CY]; RC[2] = F[CZ];
+    diver.view = 1;
     draw();
+    F.set(playerView);
+    RC.set(playerCamera);
+    diver.view = third;
+    if (bench) { if (nFrame < LOGN) logFrame[nFrame++] = dtr; if (F[GPU] > 0 && nGpu < LOGN) logGpu[nGpu++] = F[GPU]; }
+    if (F[FLT] >= FLYT) { if (bench) report(); stop(); }
   };
   addEventListener('keydown', (e) => {
     if (menu || e.repeat) return;
-    if (e.code === 'KeyF' || e.code === 'KeyB') {
+    if (e.code === 'KeyG' || e.code === 'KeyB') {
       if (flying) stop();
       else {
         flying = true; bench = e.code === 'KeyB'; F[FLT] = 0; last = F[LAST]; nFrame = nGpu = 0;
         // a benchmark hides the stats line and holds the resolution: dynT at -Infinity keeps frame() from tuning it
         if (bench) { hud = false; info.textContent = ''; dynT = -Infinity; }
       }
-    } else if (/Digit[1-6]/.test(e.code)) stop();
+    } else if (/Digit[1-8]/.test(e.code)) stop();
   });
 }

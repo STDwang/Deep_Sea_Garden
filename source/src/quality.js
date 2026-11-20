@@ -7,6 +7,10 @@
 // visit means that load crashed the tab, so this one runs a level lower.
 const mob = matchMedia('(pointer:coarse)').matches, mem = navigator.deviceMemory;
 const keep = (k, v) => { try { localStorage[k] = v; } catch {} };
+const journalStorage = {
+  read: key => localStorage.getItem(key),
+  write: (key, data) => localStorage.setItem(key, data),
+};
 let SV = [], LV, bad;
 try { SV = (localStorage.dsea || '').split(','); bad = localStorage.dseaLoad; } catch {}
 LV = SV[0] ? +SV[0] : mob ? (mem > 7 ? 1 : 2) : mem <= 4 ? 2 : 0;

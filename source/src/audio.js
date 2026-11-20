@@ -69,3 +69,12 @@ function sound() {
 }
 const mute = () => { muted = !muted; OUT.gain.setTargetAtTime(muted ? 0 : VOL, AC.currentTime, 0.08); };
 document.addEventListener('visibilitychange', () => { if (AC) document.hidden ? AC.suspend() : AC.resume(); });
+
+function pingSonar() {
+  if (!OUT || muted) return;
+  const t=AC.currentTime, tone=AC.createOscillator(), gain=AC.createGain();
+  tone.frequency.setValueAtTime(920,t); tone.frequency.exponentialRampToValueAtTime(620,t+.65);
+  gain.gain.setValueAtTime(.001,t); gain.gain.exponentialRampToValueAtTime(.14,t+.015);
+  gain.gain.exponentialRampToValueAtTime(.001,t+.7);
+  tone.connect(gain); gain.connect(OUT); tone.start(t); tone.stop(t+.72);
+}

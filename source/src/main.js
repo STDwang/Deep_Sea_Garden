@@ -48,8 +48,8 @@ const tDetail = tex(1024, 1024, 'rgba8unorm', TU.RENDER_ATTACHMENT | TU.TEXTURE_
 const tVol = tex(NX / 2, NY / 2, 'rg8unorm', TU.TEXTURE_BINDING | TU.COPY_DST, { d: NZ / 2 });
 const tMap = tex(512, 512, 'rgba8unorm', TU.TEXTURE_BINDING | TU.COPY_DST);
 
-const UB = new Float32Array(60), UBS = new Float32Array(60);
-const ubo = device.createBuffer({ size: 240, usage: BU.UNIFORM | BU.COPY_DST }), uboS = device.createBuffer({ size: 240, usage: BU.UNIFORM | BU.COPY_DST });
+const UB = new Float32Array(76), UBS = new Float32Array(76);
+const ubo = device.createBuffer({ size: UB.byteLength, usage: BU.UNIFORM | BU.COPY_DST }), uboS = device.createBuffer({ size: UBS.byteLength, usage: BU.UNIFORM | BU.COPY_DST });
 const WT = new Float32Array(4), uboW = device.createBuffer({ size: 16, usage: BU.UNIFORM | BU.COPY_DST });
 
 const VF = SS.VERTEX | SS.FRAGMENT;
@@ -104,13 +104,36 @@ const pLeafS = scenePipe(mLeaf, 'vs', 'fs', [ibLeaf], { strip: true, constants: 
 const pLeafF = scenePipe(mLeaf, 'vs', 'fs', [ibLeaf], { strip: true, constants: { ROWS: 3 } });
 const pFish = scenePipe(mAnim, 'vsFish', 'fsFish', [vbSolid, ibAnim]);
 const pManta = scenePipe(mAnim, 'vsManta', 'fsManta', [vbSolid, ibAnim]);
-const pSurf = scenePipe(mSurf, 'vs', 'fs', [], { strip: true }), pBack = scenePipe(mSurf, 'vsB', 'fsB', [], { strip: true });
+const pTurtle = scenePipe(mAnim, 'vsTurtle', 'fsTurtle', [vbSolid, ibAnim]);
+const pSurf = scenePipe(mSurf, 'vs', 'fs', [], { strip: true }), pOcean = scenePipe(mSurf, 'vsOcean', 'fsOcean', []), pBack = scenePipe(mSurf, 'vsB', 'fsB', [], { strip: true });
 const pBub = scenePipe(mSpr, 'vsBub', 'fsBub', [ibBub], { strip: true, blend: { color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }, alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' } } });
 const ADD = { color: { srcFactor: 'one', dstFactor: 'one' }, alpha: { srcFactor: 'one', dstFactor: 'one' } };
+const diverParticleLayout = { arrayStride: 48, stepMode: 'instance',
+  attributes: [A(0,0,'float32x4'), A(1,16,'float32x4'), A(2,32,'float32x4')] };
+const pWake = scenePipe(mSpr,'vsWake','fsWake',[diverParticleLayout],{strip:true,blend:ADD});
+const pJelly = scenePipe(mAnim, 'vsJelly', 'fsJelly', [vbSolid, ibAnim], { blend: ADD });
 const pSnow = scenePipe(mSpr, 'vsSnow', 'fsSnow', [ibSnow], { strip: true, blend: ADD });
 const pGl = scenePipe(mLeaf, 'vsGl', 'fsGl', [ibBub], { strip: true, blend: ADD, constants: { ROWS: 7 } });
 const pSolidSh = shadowPipe(mSolid, 'vs', [vbSolid, ibSolid]), pTerrSh = shadowPipe(mSolid, 'vs', [vbSolid, ibSolid], { cull: 'front' });
 const pLeafSh = shadowPipe(mLeaf, 'vs', [ibLeaf], { strip: true, constants: { ROWS: 3 } });
+
+// third-person diver: its own bind group keeps the shared scene bindings intact
+const mDiver = mod(W_DIVER);
+const UBD = new Float32Array(520), uboD = device.createBuffer({ size: UBD.byteLength, usage: BU.UNIFORM | BU.COPY_DST });
+const bglD = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: VF, buffer: {} }] });
+const plD = device.createPipelineLayout({ bindGroupLayouts: [bgl0, bglD] });
+const vbDiver = { arrayStride: 40, attributes: [A(0, 0, 'float32x3'), A(1, 12, 'float32x3'), A(2, 24, 'float32x4')] };
+const pDiver = device.createRenderPipeline({ layout: plD,
+  vertex: { module: mDiver, entryPoint: 'vs', buffers: [vbDiver, { arrayStride: 32, attributes: [A(3, 0, 'float32x4'), A(4, 16, 'float32x4')] }] },
+  fragment: { module: mDiver, entryPoint: 'fs', targets: [{ format: HDR }] },
+  primitive: { topology: 'triangle-list', cullMode: 'none' },
+  depthStencil: { format: DEPTH, depthWriteEnabled: true, depthCompare: 'greater' }, multisample: { count: AA } });
+const bgD = device.createBindGroup({ layout: bglD, entries: [{ binding: 0, resource: { buffer: uboD } }] });
+const diverParticles = Diver.particles;
+const particleBuffer = buf(diverParticles.data, BU.VERTEX);
+const dvData = Diver.build();
+const dvMesh = { vb: buf(dvData.verts, BU.VERTEX), skin: buf(dvData.skin, BU.VERTEX),
+  ib: buf(dvData.idx, BU.INDEX), ic: dvData.ni };
 
 const mWater = mod(W_WATER);
 const pWater = device.createRenderPipeline({ layout: 'auto', vertex: { module: mWater, entryPoint: 'vs' }, fragment: { module: mWater, entryPoint: 'fs', targets: [{ format: HDR }] } });
@@ -173,12 +196,14 @@ let D;
 }
 // Distance to the rock for collide(), in 1/127 m (> 0 in rock, clamped to ±1 m), kept only in the 4x4x4-voxel
 // bricks near the surface within the camera's reach (~2 MB). CI per brick: 0 all water, 1 all rock, n brick n-2 in CG.
-const CO = 52, CN = 102, CI = new Uint16Array(CN * CN * NY / 4);
+const SWIM_RADIUS = 174;
+const CO = 8, CN = 124, CI = new Uint32Array(CN * CN * NY / 4);
 let CG = new Int8Array(64 * 65534);
 {
   let n = 0;
   for (let bz = 0; bz < CN; bz++) for (let by = 1; by < NY / 4 - 1; by++) for (let bx = 0; bx < CN; bx++) {
-    if (hypot(bx - CN / 2 + 0.5, bz - CN / 2 + 0.5) > 52) continue; // more than 156 m out: never reached
+    if (hypot(bx - CN / 2 + 0.5, bz - CN / 2 + 0.5) > 61) continue; // Includes room for the trailing camera.
+    if ((n+1)*64 > CG.length) { const larger=new Int8Array(CG.length*2); larger.set(CG); CG=larger; }
     let lo = 127, hi = -127;
     for (let z = 0; z < 4; z++) for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) {
       const i = CO + bx * 4 + x + NX * (by * 4 + y + NY * (CO + bz * 4 + z)), gz = D[i + NX * NY] - D[i - NX * NY];
@@ -201,6 +226,8 @@ const POSES = [
   [-55, 1.5, -18, -60, -30, 8],
   [10, 1.2, -62, 6, -22, -90],
   [3, 1.6, 62, 1, -28, 100],
+  [152, 4, 25, 163, -28, 25],
+  [142, 4, -82, 151, -30, -82],
 ];
 // 60 s camera path (position + look-at, Catmull-Rom): the world generator keeps it clear, dev.js flies along it
 const FLY = new Float32Array([
@@ -234,6 +261,10 @@ const FLYN = FLY.length / 6, FLYT = 60, LUTN = 1024, flyLUT = new Float32Array(L
 const flyPts = [];
 // per-frame float state lives in one preallocated array, so the frame loop allocates no heap numbers
 const F = new Float64Array(32), P6 = new Float64Array(6);
+// RC: rendered camera position. F[CX..CZ] is the diver's body; in third person
+// the two differ. SV/POSES keep addressing F as before.
+const RC = new Float64Array(3);
+let diver = null;
 const CX = 0, CY = 1, CZ = 2, YAW = 3, PIT = 4, FX = 5, FY = 6, FZ = 7, RX = 8, RZ = 9, UX = 10, UY = 11, UZ = 12, VX = 13, VY = 14, VZ = 15, TIME = 16, FLT = 17, LAST = 18, GPU = 19, HUDT = 20, SPL = 21, MX = 22, MY = 23, MZ = 24;
 // aim the camera from P6 = position + look-at point
 function aim() {
@@ -269,6 +300,17 @@ for (const p of POSES) flyPts.push([p[0], -40, p[2]]);
 await say('正在种植海藻…', 0.73, 2500);
 const Wd = makeWorld(D, T, flyPts, POSES);
 for (const p of POSES) p[1] += Wd.gy(p[0], p[2]);
+// Keep a coarse seabed map for locating currents after releasing the generator.
+const currentBed = Float32Array.from({length: 47 * 47}, (_,i) =>
+  Wd.gy((i % 47 - 23) * 8, (Math.floor(i / 47) - 23) * 8));
+function currentBedHeight(x,z) {
+  const gx=clamp(x/8+23,0,46), gz=clamp(z/8+23,0,46);
+  const ix=min(45,floor(gx)), iz=min(45,floor(gz));
+  const i=iz*47+ix;
+  const near=mix(currentBed[i],currentBed[i+1],gx-ix);
+  const far=mix(currentBed[i+47],currentBed[i+48],gx-ix);
+  return mix(near,far,gz-iz);
+}
 D = Wd.gy = T.smp = null; // with gy goes the generator's working memory (about 200 MB)
 
 await say('正在搭建场景亮点…', 0.94, 1200);
@@ -281,6 +323,24 @@ const meshes = [meshChunk(1, 3), meshChunk(7, 3), meshChunk(13, 3), meshChunk(22
   meshCoral(0), meshCoral(1), meshTubes()].map((m) => m.build());
 meshes.push(meshFluke(), meshShip().build(), meshManta().build(), meshFish().build(),
   meshChunk(3).build(), meshChunk(11).build(), meshChunk(29).build(), meshChunk(5, 3).build(), meshChunk(17, 3).build(), meshChunk(41, 3).build(), meshChunk(9, 1).build(), meshCoral(0, 1).build(), meshCoral(1, 1).build(), meshChunk(5, 2, 1).build(), meshChunk(17, 2, 1).build(), meshChunk(41, 2, 1).build());
+const TURTLE = meshTurtle().build();
+const JELLY = meshJelly().build();
+meshes.push(TURTLE, JELLY);
+// center xyz, patrol radius, initial angle, angular speed, body scale, padding
+const turtles = new Float32Array([
+  -.5, -38, .5, 6, -1.32, .146, 2.2, 0,
+  52, -31, 18, 7, .36, -.123, 2.45, 0,
+  -12, -30, -102, 8, 2.15, .104, 2.05, 0,
+]);
+const ibTurtle = buf(turtles, BU.VERTEX);
+const jellies = new Float32Array([
+  1, -32, 76, 0, .4, 0, .72, 0,
+  6, -31, 82, 0, 1.8, 0, .95, 0,
+  -1, -30, 81, 0, 3.1, 0, 1.02, 0,
+  5, -29, 88, 0, 4.7, 0, 1.15, 0,
+  2, -33, 92, 0, 5.4, 0, .76, 0,
+]);
+const ibJelly = buf(jellies, BU.VERTEX);
 let nV = 0, nI = 0;
 for (const m of meshes) { m.v0 = nV; m.i0 = nI; nV += m.nv; nI += m.ib.length; }
 const allV = new Uint8Array(nV * 16), allI = new Uint32Array(nI);
@@ -389,14 +449,16 @@ if (hasTS) {
 
 // ---------------------------------------------------------------- frame
 let hud = false;
-let kf = 0, kb = 0, kl = 0, kr = 0, ku = 0, kd = 0, ks = 0, mdx = 0, mdy = 0, lkx = 0, lky = 0, l2x = 0, l2y = 0, hN = 0, hMax = 0, hMin = 1e9, hPer = 1e9, hLate = 0, hTot = 0, tId = -1, tN = 0, tx0 = 0, ty0 = 0, tx = 0, ty = 0;
-const TANH = 0.6, NEAR = 0.1, EXPO = 0.62, RAYS = 0.54;
+let mdx = 0, mdy = 0, lkx = 0, lky = 0, l2x = 0, l2y = 0, hN = 0, hMax = 0, hMin = 1e9, hPer = 1e9, hLate = 0, hTot = 0, tId = -1, tN = 0, tx0 = 0, ty0 = 0, tx = 0, ty = 0;
+let touchDepth = 0;
+let TANH = 0.6;
+const NEAR = 0.1, EXPO = 0.62, RAYS = 0.54;
 const submitList = [null];
 const rowOrd = new Uint8Array(CELLS);
 // Draws the cells of a cell-sorted buffer that are in view and within [minD, maxD) (scaled by `det`, but not for the
 // terrain) as merged runs, nearest rows first.
 function drawCells(r, start, lo, hi, mar, indexed, verts, minD, maxD) {
-  const cx = F[CX], cy = F[CY], cz = F[CZ], fx = F[FX], fy = F[FY], fz = F[FZ], rx = F[RX], rz = F[RZ], ux = F[UX], uy = F[UY], uz = F[UZ];
+  const cx = RC[0], cy = RC[1], cz = RC[2], fx = F[FX], fy = F[FY], fz = F[FZ], rx = F[RX], rz = F[RZ], ux = F[UX], uy = F[UY], uz = F[UZ];
   const ds = indexed === 1 ? 1 : det * det;
   const tx = TANH * W / H, hw = CELLW * 0.5, ex = hw + mar, min2 = minD * minD * ds, max2 = maxD * maxD * ds;
   for (let k = 0; k < CELLS; k++) {
@@ -424,7 +486,7 @@ function drawCells(r, start, lo, hi, mar, indexed, verts, minD, maxD) {
 }
 function render() {
   // camera basis (right vector is horizontal)
-  const cx = F[CX], cy = F[CY], cz = F[CZ], pitch = F[PIT], yaw = F[YAW];
+  const cx = RC[0], cy = RC[1], cz = RC[2], pitch = F[PIT], yaw = F[YAW];
   const cp = cos(pitch), fy = sin(pitch), rx = cos(yaw), rz = sin(yaw), fx = cp * rz, fz = -cp * rx;
   const ux = -rz * fy, uy = rz * fx - rx * fz, uz = rx * fy;
   F[FX] = fx; F[FY] = fy; F[FZ] = fz; F[RX] = rx; F[RZ] = rz; F[UX] = ux; F[UY] = uy; F[UZ] = uz;
@@ -441,6 +503,10 @@ function render() {
   m[51] = zt * zt * (3 - 2 * zt);
   let ek = (-cy - 8) / 26; ek = ek < 0 ? 0 : ek > 1 ? 1 : ek;
   m[56] = EXPO * (0.6 + 0.4 * ek); m[57] = RAYS; m[58] = det;
+  m[60] = F[CX]; m[61] = F[CY]; m[62] = F[CZ]; m[63] = menu ? 0 : 1;
+  m.set(pulsePos,64); m[67] = F[TIME]-pulseTime;
+  m[68]=sin(diver.yaw)*cos(diver.pitch); m[69]=sin(diver.pitch); m[70]=-cos(diver.yaw)*cos(diver.pitch); m[71]=Number(lamp);
+  m.set(splashPos,72); m[75]=F[TIME]-splashTime;
   Q.writeBuffer(ubo, 0, UB);
   WT[0] = F[TIME]; Q.writeBuffer(uboW, 0, WT);
 
@@ -456,32 +522,58 @@ function render() {
   // scene
   r = e.beginRenderPass(passScene);
   r.setBindGroup(0, bg0);
-  r.setPipeline(pTerrain); r.setVertexBuffer(0, vbTerrain); r.setVertexBuffer(1, ibSolids); r.setIndexBuffer(ibTerrain, 'uint32');
-  drawCells(r, T.start, T.lo, T.hi, 1.5, 1, 0, 0, 240);
-  r.setPipeline(pSolid); r.setVertexBuffer(0, vbMesh); r.setIndexBuffer(ibMesh, 'uint32');
-  for (let i = 0; i < 12; i++) { const g = Wd.solids.ranges[i]; if (g[1]) r.drawIndexed(meshes[i].ib.length, g[1], meshes[i].i0, meshes[i].v0, g[0]); }
-  for (let i = 0; i < NCHUNK; i++) {
-    const c = Wd.chunks[i], big = i > 2 && i < 6; r.setVertexBuffer(1, ibChunk[i]);
-    drawCells(r, c.start, c.lo, c.hi, 3, meshes[14 + i], 0, 0, i > 5 ? 30 : big ? 40 : 96);
-    if (big) drawCells(r, c.start, c.lo, c.hi, 3, meshes[20 + i], 0, 40, 150);
+  if (cy < 0) {
+    r.setPipeline(pTerrain); r.setVertexBuffer(0, vbTerrain); r.setVertexBuffer(1, ibSolids); r.setIndexBuffer(ibTerrain, 'uint32');
+    drawCells(r, T.start, T.lo, T.hi, 1.5, 1, 0, 0, 240);
+    r.setPipeline(pSolid); r.setVertexBuffer(0, vbMesh); r.setIndexBuffer(ibMesh, 'uint32');
+    for (let i = 0; i < 12; i++) { const g = Wd.solids.ranges[i]; if (g[1]) r.drawIndexed(meshes[i].ib.length, g[1], meshes[i].i0, meshes[i].v0, g[0]); }
+    for (let i = 0; i < NCHUNK; i++) {
+      const c = Wd.chunks[i], big = i > 2 && i < 6; r.setVertexBuffer(1, ibChunk[i]);
+      drawCells(r, c.start, c.lo, c.hi, 3, meshes[14 + i], 0, 0, i > 5 ? 30 : big ? 40 : 96);
+      if (big) drawCells(r, c.start, c.lo, c.hi, 3, meshes[20 + i], 0, 40, 150);
+    }
+    for (let i = 0; i < 6; i++) {
+      const lod = i === 3 || i === 4; r.setVertexBuffer(1, ibProp[i]);
+      drawCells(r, Wd.props[i].start, Wd.props[i].lo, Wd.props[i].hi, 3, meshes[4 + i], 0, 0, lod ? 6 : 110);
+      if (lod) drawCells(r, Wd.props[i].start, Wd.props[i].lo, Wd.props[i].hi, 3, meshes[18 + i], 0, 6, 110);
+    }
+    r.setPipeline(pManta); r.setVertexBuffer(1, ibManta); r.drawIndexed(MANTA.ib.length, nManta, MANTA.i0, MANTA.v0, 0);
+    r.setPipeline(pTurtle); r.setVertexBuffer(1, ibTurtle); r.drawIndexed(TURTLE.ib.length, turtles.length / 8, TURTLE.i0, TURTLE.v0, 0);
+    r.setPipeline(pFish); r.setVertexBuffer(1, ibFish); r.drawIndexed(FISH.ib.length, nFish, FISH.i0, FISH.v0, 0);
+    // kelp and plants: 9-row blades up close, 5 rows mid-range, a decimated set far away
+    r.setPipeline(pLeaf); r.setVertexBuffer(0, ibBig); drawCells(r, Wd.big.start, Wd.big.lo, Wd.big.hi, 5, false, 18, 0, 24);
+    r.setPipeline(pLeaf5); drawCells(r, Wd.big.start, Wd.big.lo, Wd.big.hi, 5, false, 10, 24, 58);
+    r.setPipeline(pLeafF); r.setVertexBuffer(0, ibBigF); drawCells(r, Wd.bigF.start, Wd.bigF.lo, Wd.bigF.hi, 5, false, 6, 58, 150);
+    r.setPipeline(pLeafS); r.setVertexBuffer(0, ibSmall); drawCells(r, Wd.small.start, Wd.small.lo, Wd.small.hi, 1.5, false, 6, 0, 70);
   }
-  for (let i = 0; i < 6; i++) {
-    const lod = i === 3 || i === 4; r.setVertexBuffer(1, ibProp[i]);
-    drawCells(r, Wd.props[i].start, Wd.props[i].lo, Wd.props[i].hi, 3, meshes[4 + i], 0, 0, lod ? 6 : 110);
-    if (lod) drawCells(r, Wd.props[i].start, Wd.props[i].lo, Wd.props[i].hi, 3, meshes[18 + i], 0, 6, 110);
-  }
-  r.setPipeline(pManta); r.setVertexBuffer(1, ibManta); r.drawIndexed(MANTA.ib.length, nManta, MANTA.i0, MANTA.v0, 0);
-  r.setPipeline(pFish); r.setVertexBuffer(1, ibFish); r.drawIndexed(FISH.ib.length, nFish, FISH.i0, FISH.v0, 0);
-  // kelp and plants: 9-row blades up close, 5 rows mid-range, a decimated set far away
-  r.setPipeline(pLeaf); r.setVertexBuffer(0, ibBig); drawCells(r, Wd.big.start, Wd.big.lo, Wd.big.hi, 5, false, 18, 0, 24);
-  r.setPipeline(pLeaf5); drawCells(r, Wd.big.start, Wd.big.lo, Wd.big.hi, 5, false, 10, 24, 58);
-  r.setPipeline(pLeafF); r.setVertexBuffer(0, ibBigF); drawCells(r, Wd.bigF.start, Wd.bigF.lo, Wd.bigF.hi, 5, false, 6, 58, 150);
-  r.setPipeline(pLeafS); r.setVertexBuffer(0, ibSmall); drawCells(r, Wd.small.start, Wd.small.lo, Wd.small.hi, 1.5, false, 6, 0, 70);
-  r.setPipeline(pSurf); r.draw(4);
+  if (cy >= 0) { r.setPipeline(pOcean); r.draw(64 * 64 * 6); }
+  else { r.setPipeline(pSurf); r.draw(4); }
   r.setPipeline(pBack); r.draw(4);
-  r.setPipeline(pBub); r.setVertexBuffer(0, ibBubbles); r.draw(4, nBub);
-  r.setPipeline(pGl); r.setVertexBuffer(0, ibGl); r.draw(4, nGl);
-  r.setPipeline(pSnow); r.setVertexBuffer(0, ibSnowB); r.draw(4, nSnow);
+  if (cy < 0) {
+    r.setPipeline(pBub); r.setVertexBuffer(0, ibBubbles); r.draw(4, nBub);
+    r.setPipeline(pGl); r.setVertexBuffer(0, ibGl); r.draw(4, nGl);
+    r.setPipeline(pSnow); r.setVertexBuffer(0, ibSnowB); r.draw(4, nSnow);
+  }
+  // third-person diver, drawn last so its extra bind group cannot affect scene shaders.
+  // In first person the body is hidden to avoid clipping the near plane.
+  if (diver && diver.view !== 1) {
+    UBD.set(Diver.bones(diver), 8);
+    UBD[0] = diver.pos[0]; UBD[1] = diver.pos[1]; UBD[2] = diver.pos[2]; UBD[3] = Diver.rootY;
+    UBD[4] = diver.yaw; UBD[5] = diver.pitch; UBD[6] = diver.roll; UBD[7] = 0;
+    Q.writeBuffer(uboD, 0, UBD);
+    r.setPipeline(pDiver); r.setBindGroup(1, bgD); r.setVertexBuffer(0, dvMesh.vb); r.setVertexBuffer(1, dvMesh.skin); r.setIndexBuffer(dvMesh.ib, 'uint32');
+    r.drawIndexed(dvMesh.ic);
+  }
+  if (!menu) {
+    diverParticles.update(diver,F[TIME],camera);
+    diverParticles.upload(Q,particleBuffer);
+    r.setPipeline(pWake); r.setVertexBuffer(0,particleBuffer);
+    diverParticles.live.spans(diverParticles.head,(first,count)=>r.draw(4,count,0,first));
+  }
+  if (cy < 0) {
+    r.setPipeline(pJelly); r.setVertexBuffer(0, vbMesh); r.setIndexBuffer(ibMesh, 'uint32'); r.setVertexBuffer(1, ibJelly);
+    r.drawIndexed(JELLY.ib.length, jellies.length / 8, JELLY.i0, JELLY.v0, 0);
+  }
   r.end();
   // light shafts
   r = e.beginRenderPass(passRays); r.setPipeline(pRays); r.setBindGroup(0, bgRays); r.draw(3); r.end();
@@ -503,12 +595,14 @@ function render() {
 // each axis for the gradient
 const CE = new Float64Array([0, 0, 0, .375, 0, 0, -.375, 0, 0, 0, .375, 0, 0, -.375, 0, 0, 0, .375, 0, 0, -.375]), CS = new Float64Array(7);
 const cv = (x, y, z) => { const b = CI[(x >> 2) + CN * ((y >> 2) + NY / 4 * (z >> 2))]; return b > 1 ? CG[b * 64 - 128 + (x & 3) + 4 * (y & 3) + 16 * (z & 3)] : b * 254 - 127; };
-function sd(j) {
-  const x = (F[CX] + CE[j * 3] - OX) / VS - CO, y = (F[CY] + CE[j * 3 + 1] - OY) / VS, z = (F[CZ] + CE[j * 3 + 2] - OZ) / VS - CO;
+function rockDistance(px,py,pz) {
+  if (py >= 0 || py < OY) return -1;
+  const x = (px - OX) / VS - CO, y = (py - OY) / VS, z = (pz - OZ) / VS - CO;
   const ix = x | 0, iy = y | 0, iz = z | 0, u = x - ix, v = y - iy, a = cv(ix, iy, iz), b = cv(ix, iy + 1, iz), c = cv(ix, iy, iz + 1), d = cv(ix, iy + 1, iz + 1);
   const p = a + (cv(ix + 1, iy, iz) - a) * u, q = b + (cv(ix + 1, iy + 1, iz) - b) * u, r = c + (cv(ix + 1, iy, iz + 1) - c) * u, s = d + (cv(ix + 1, iy + 1, iz + 1) - d) * u;
-  const e = p + (q - p) * v; CS[j] = (e + (r + (s - r) * v - e) * (z - iz)) / 127;
+  const e = p + (q - p) * v; return (e + (r + (s - r) * v - e) * (z - iz)) / 127;
 }
+function sd(j) { CS[j] = rockDistance(F[CX]+CE[3*j], F[CY]+CE[3*j+1], F[CZ]+CE[3*j+2]); }
 // Moves the camera by F[MX..MZ] in steps shorter than its radius CR (so it can't pass through thin rock), pushing it
 // back out after each step and dropping velocity into the rock, so it slides along.
 const CR = 0.5;
@@ -562,15 +656,25 @@ function frame(now) {
     const kq = 1 - exp(-dt * 30); lkx += mdx * 0.0022; lky += mdy * 0.0022; mdx = 0; mdy = 0;
     const ax = lkx * kq, ay = lky * kq; lkx -= ax; lky -= ay; l2x += ax; l2y += ay;
     const dyw = l2x * kq, dpt = l2y * kq; l2x -= dyw; l2y -= dpt;
-    const yaw = F[YAW] + dyw; let pitch = F[PIT] - dpt; pitch = pitch < -1.55 ? -1.55 : pitch > 1.55 ? 1.55 : pitch;
-    const sp = ks || tN > 1 ? 26 : 7, k = 1 - exp(-dt * 4.5), mf = tId >= 0 ? 0.7 : kf - kb, mr = kr - kl, mu = ku - kd, cp = cos(pitch), sy = sin(yaw), cw = cos(yaw);
-    const vx = F[VX] + ((sy * cp * mf + cw * mr) * sp - F[VX]) * k, vy = F[VY] + ((sin(pitch) * mf + mu) * sp - F[VY]) * k, vz = F[VZ] + ((-cw * cp * mf + sy * mr) * sp - F[VZ]) * k;
-    let x = F[CX] + vx * dt, y = F[CY] + vy * dt, z = F[CZ] + vz * dt;
-    const rad = sqrt(x * x + z * z); if (rad > 150) { x *= 150 / rad; z *= 150 / rad; }
-    y = y < -52 ? -52 : y > -1.2 ? -1.2 : y;
-    F[YAW] = yaw; F[PIT] = pitch; F[VX] = vx; F[VY] = vy; F[VZ] = vz; F[MX] = x - F[CX]; F[MY] = y - F[CY]; F[MZ] = z - F[CZ];
-    collide();
+    if (diver && !menu && !photo) {
+      diver.targetYaw += dyw + orbitYaw * dt;
+      diver.targetPitch = clampLook(diver.targetPitch - dpt + orbitPitch * dt);
+      orbitYaw *= exp(-dt * 10.5); orbitPitch *= exp(-dt * 10.5);
+      const analog = { fw: tId >= 0 ? .85 : 0, v: touchDepth, sprint: tN > 1, autoSwim };
+      Diver.step(diver, keys, dt, F[TIME], floorLimit, null, undefined, null, analog);
+      let [x, y, z] = diver.pos;
+      const rad = hypot(x, z);
+      if (rad > SWIM_RADIUS) { x *= SWIM_RADIUS / rad; z *= SWIM_RADIUS / rad; }
+      y = max(-52, min(8, y));
+      F[MX] = x - F[CX]; F[MY] = y - F[CY]; F[MZ] = z - F[CZ];
+      F[VX] = diver.velocity[0]; F[VY] = diver.velocity[1]; F[VZ] = diver.velocity[2];
+      collide();
+      diver.pos[0] = F[CX]; diver.pos[1] = F[CY]; diver.pos[2] = F[CZ];
+      diver.velocity[0] = F[VX]; diver.velocity[1] = F[VY]; diver.velocity[2] = F[VZ];
+      follow(dt);
+    } else if (photo && !menu) movePhoto(dt);
   }
+  if (!menu && !document.hidden && !dead) journal.update(F[CX], F[CY], F[CZ], now);
   render();
   if (hud) {
     hN++; if (dtr > hMax) hMax = dtr; if (dtr < hMin) hMin = dtr; if (dtr > hPer * 1.5) { hLate++; hTot++; }
@@ -580,25 +684,108 @@ function frame(now) {
 }
 
 // ---------------------------------------------------------------- input
-const key = (e, v) => {
-  switch (e.code) {
-    case 'KeyW': kf = v; break; case 'KeyS': kb = v; break; case 'KeyA': kl = v; break; case 'KeyD': kr = v; break;
-    case 'KeyE': ku = v; break; case 'KeyQ': kd = v; break; case 'ShiftLeft': case 'ShiftRight': ks = v; break;
-    default: if (v && !e.repeat) {
-      if (e.code === 'KeyH') { hud = !hud; hTot = 0; hPer = 1e9; info.textContent = ''; }
-      else if (e.code === 'KeyM') mute();
-      else if (e.code === 'Escape') ui(true);
-      else if (e.code >= 'Digit1' && e.code <= 'Digit6') lookAt(...POSES[e.code.charCodeAt(5) - 49]);
+const keys = Object.create(null);
+const floorLimit = () => -53; // Cave ceilings and floors are resolved by collide().
+const camera = { pos: [0,0,0] };
+let orbitYaw = 0, orbitPitch = 0, drag = null, autoSwim = false, photo = false;
+let lamp = false, pulseTime = -100, pulsePos = [0,0,0];
+let splashTime=-100, splashPos=[0,0,0];
+Diver.setSplashHook((strength,pos)=>{ splashTime=F[TIME]; splashPos=pos;
+  diverParticles.burst(pos,3,Math.round(14+16*strength),3.6,F[TIME]); });
+const clampLook = pitch => Math.max(-1.15, Math.min(1.15, pitch));
+function follow(dt) {
+  Diver.camera(diver, camera, dt, floorLimit);
+  const [x,y,z] = diver.pos;
+  const dx=camera.pos[0]-x, dy=camera.pos[1]-y, dz=camera.pos[2]-z;
+  const steps=Math.ceil(Math.hypot(dx,dy,dz)/.22);
+  for (let i=1; i<=steps; i++) {
+    const t=i/steps;
+    if (rockDistance(x+dx*t,y+dy*t,z+dz*t)>-.24) {
+      const safe=(i-1)/steps;
+      camera.pos=[x+dx*safe,y+dy*safe,z+dz*safe];
+      const reach=diver.view===1 ? 4 : 1.15;
+      const ax=reach*sin(diver.targetYaw)*cos(diver.targetPitch)-dx*safe;
+      const ay=reach*sin(diver.targetPitch)-dy*safe;
+      const az=-reach*cos(diver.targetYaw)*cos(diver.targetPitch)-dz*safe;
+      camera.yaw=atan2(ax,-az); camera.pitch=atan2(ay,hypot(ax,az)); break;
     }
   }
+  RC.set(camera.pos); F[YAW] = camera.yaw; F[PIT] = camera.pitch;
+  TANH = Math.tan(camera.fov / 2);
+}
+function toggleView() {
+  if (photo) { photo = false; diver.view = 0; }
+  else diver.view = (diver.view + 1) % 3;
+  follow(0);
+}
+function sonar() {
+  if (F[TIME] - pulseTime < 1.15) return;
+  pulseTime = F[TIME]; pulsePos = diver.pos.slice();
+  diverParticles.burst(pulsePos,2,14,2.8,F[TIME]);
+  journal.scan(diver.pos,diver.targetYaw,performance.now());
+  pingSonar();
+}
+function movePhoto(dt) {
+  const axis = (a,b) => Number(a.some(k=>keys[k])) - Number(b.some(k=>keys[k]));
+  const fw = axis(['KeyW','ArrowUp'],['KeyS','ArrowDown']), lr = axis(['KeyD','ArrowRight'],['KeyA','ArrowLeft']);
+  const up = axis(['Space','KeyE'],['KeyQ','KeyC','KeyX','ControlLeft','ControlRight']);
+  const d = dt * (keys.ShiftLeft || keys.ShiftRight ? 4.6 : 1.8);
+  RC[0] += d * (F[FX]*fw + F[RX]*lr); RC[1] += d * (F[FY]*fw + up); RC[2] += d * (F[FZ]*fw + F[RZ]*lr);
+}
+function takePhoto() {
+  render();
+  const a = document.createElement('a'); a.download = '深海潜水员.png'; a.href = canvas.toDataURL(); a.click();
+}
+addEventListener('keydown', e => {
+  if (['INPUT','TEXTAREA'].includes(e.target.tagName) || menu && !['KeyH','KeyM'].includes(e.code)) return;
+  if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
+  keys[e.code] = true;
+  if (e.code === 'KeyS' || e.code === 'ArrowDown') autoSwim = false;
+  if (e.repeat) return;
+  sound();
+  if (e.code === 'KeyH') { hud = !hud; hTot = 0; hPer = 1e9; info.textContent = ''; }
+  else if (e.code === 'KeyM') mute();
+  else if (e.code === 'Escape') { if (photo) { photo = false; follow(0); } else ui(true); }
+  else if (e.code === 'KeyP') { if (photo) takePhoto(); else { release(); photo = true; } }
+  else if (photo && e.code === 'Enter') takePhoto();
+  else if (e.code === 'KeyR') { if (photo) follow(0); else autoSwim = !autoSwim; }
+  else if (!photo && e.code === 'KeyV') toggleView();
+  else if (!photo && e.code === 'KeyF') sonar();
+  else if (e.code === 'KeyL') lamp = !lamp;
+  else if (e.code >= 'Digit1' && e.code <= 'Digit8') visitSpot(Number(e.code.slice(5))-1);
+});
+addEventListener('keyup', e => { delete keys[e.code]; });
+const release = () => {
+  for (const key of Object.keys(keys)) delete keys[key];
+  drag = null; orbitPitch = orbitYaw = mdx = mdy = lkx = lky = l2x = l2y = 0;
+  touchDepth = tN = 0; tId = -1;
 };
-// behind the menu only the stats and mute keys work
-addEventListener('keydown', (e) => { if (menu && e.code !== 'KeyH' && e.code !== 'KeyM') return; sound(); key(e, 1); });
-addEventListener('keyup', (e) => key(e, 0));
-const release = () => { kf = kb = kl = kr = ku = kd = ks = 0; tId = -1; tN = 0; };
-const capture = () => { sound(); const p = canvas.requestPointerLock({ unadjustedMovement: true }); if (p && p.catch) p.catch(() => canvas.requestPointerLock()).catch(() => 0); };
-canvas.addEventListener('click', capture);
-addEventListener('mousemove', (e) => { if (document.pointerLockElement === canvas) { mdx += e.movementX; mdy += e.movementY; } });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('pointerdown', e => {
+  if (menu || e.pointerType !== 'mouse' || ![0,2].includes(e.button)) return;
+  drag = { id:e.pointerId, x:e.clientX, y:e.clientY, button:e.button, time:performance.now(), moved:0 };
+  orbitYaw = orbitPitch = 0; canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e => {
+  if (!drag || drag.id !== e.pointerId) return;
+  const dx = e.clientX-drag.x, dy = e.clientY-drag.y;
+  drag.x=e.clientX; drag.y=e.clientY; drag.moved += Math.hypot(dx,dy);
+  const yaw=dx*.0038, pitch=-dy*.0038*.88;
+  if (photo) { F[YAW]-=yaw*.85; F[PIT]=clampLook(F[PIT]-pitch*.85); return; }
+  diver.targetYaw+=yaw; diver.targetPitch=clampLook(diver.targetPitch+pitch);
+  orbitYaw=Math.max(-3.8,Math.min(3.8,yaw*32)); orbitPitch=Math.max(-2.8,Math.min(2.8,pitch*32));
+});
+for (const name of ['pointerup','pointercancel','lostpointercapture']) canvas.addEventListener(name,e=>{
+  if (!drag || e.pointerId!==drag.id) return;
+  if (name==='pointerup' && !photo && drag.button===2 && drag.moved<8 && performance.now()-drag.time<220) sonar();
+  drag=null;
+});
+canvas.addEventListener('wheel',e=>{
+  if (menu) return;
+  e.preventDefault();
+  if (photo) TANH=Math.tan(Math.max(.28,Math.min(1.38,2*Math.atan(TANH)+e.deltaY*.001))/2);
+  else diver.zoomDist=Math.max(2.2,Math.min(7.8,diver.zoomDist+e.deltaY*.0028));
+},{passive:false});
 addEventListener('blur', release);
 const touch = (e) => {
   e.preventDefault(); sound(); tN = e.touches.length;
@@ -619,7 +806,7 @@ let menu = true;
 const bDive = $('d');
 const ui = (m) => {
   if (dead) return;
-  menu = m; body.className = m ? 'm' : document.pointerLockElement ? 'g p' : 'g';
+  menu = m; body.className = m ? 'm' : 'g';
   // focus the dive button so Enter works (delayed: it can't take focus while still hidden)
   if (m) { release(); setTimeout(() => menu && bDive.focus(), 100); } else document.activeElement.blur();
 };
@@ -627,15 +814,30 @@ const go = () => {
   sound(); ui(false); bDive.textContent = '继续';
   // phones: go fullscreen and ask for landscape; where that is refused the CSS rotation still applies
   if (mob) document.documentElement.requestFullscreen?.()?.then(() => screen.orientation.lock('landscape')).catch(() => 0);
-  if (!mob) capture();
+
 };
 bDive.onclick = go; $('o').onclick = () => ui(true);
 // detail buttons: the current level is lit, the others reload the page with theirs
 $('q').querySelectorAll('button').forEach((b, i) => { if (i === 2 - LV) b.className = 'on'; else b.onclick = () => { keep('dsea', 2 - i); location.reload(); }; });
-document.addEventListener('pointerlockchange', () => ui(!document.pointerLockElement));
+
 
 // draw the first frame and wait for the GPU to finish it (pipelines get compiled on first use) before the reveal
+function visitSpot(index) {
+  lookAt(...POSES[index]);
+  mdx = mdy = lkx = lky = l2x = l2y = 0;
+  diver.pos[0] = F[CX]; diver.pos[1] = F[CY]; diver.pos[2] = F[CZ];
+  diver.velocity.fill(0);
+  diver.yaw = diver.goalYaw = diver.targetYaw = F[YAW];
+  diver.pitch = diver.goalPitch = diver.targetPitch = F[PIT];
+  diverParticles.live.clear(); diver.airborne = false; autoSwim = false; photo = false; release(); follow(0);
+}
+
 lookAt(...POSES[0]);
+diver = Diver.create([F[CX], F[CY], F[CZ]], F[YAW], F[PIT]);
+visitSpot(0);
+const journal = createJournal(POSES, journalStorage);
+$('survey-sonar').addEventListener('click', () => { if (!menu && !photo) sonar(); });
+
 await say('Letting the light in…', 1, 400);
 render(); await Q.onSubmittedWorkDone();
 setTimeout(keep, 15e3, 'dseaLoad', ''); // the load counts as survived after 15 s of frames

@@ -1,0 +1,55 @@
+<div id="m">
+  <section class="dock" aria-label="深海潜水员">
+    <h1>深海潜水员</h1>
+    <div id="l"><div id="p"><i id="b"></i></div><p id="s">正在准备海底世界…</p><p id="w" hidden></p></div>
+    <div id="g">
+      <button id="start">关注作者 · 开始体验</button>
+      <button id="d" class="enter">直接进入游戏</button>
+      <details id="journal-details"><summary id="journal-count">海底日志</summary><p>外海测绘 · 发出声呐查看测站方位，抵近后再次扫描。两站采样后返回石鲸尾归档。</p><ol id="journal-entries"></ol><p id="journal-save" role="status"></p></details>
+      <div class="subline">
+        <span id="home-time">累计潜水 0 秒</span>
+        <button id="report" hidden>AI 潜水报告</button>
+      </div>
+      <div class="actions">
+        <button id="note" hidden>发布笔记</button>
+        <button id="share" hidden>分享海底</button>
+        <button id="comment" hidden>写评论</button>
+        <button id="rank" hidden>潜水榜</button>
+      </div>
+    </div>
+    <div class="dock-foot">
+      <details class="settings">
+        <summary><span class="tri">▶</span> 探索设置</summary>
+        <div class="actions">
+          <button id="audio">关闭声音</button>
+          <label>画质 <select id="quality"><option value="410000">标准</option><option value="250000">省电</option></select></label>
+          <label>观景点 <select id="spot" aria-label="观景点"><option value="">选择地点</option></select></label>
+        </div>
+        <p>电脑按 WASD 游动，鼠标拖动环顾，滚轮调整距离。Shift 加速，配合 E 可跃出水面。触屏按住前进，拖动转向，双指加速。长按上浮或下潜可调整深度。</p>
+      </details>
+      <span class="hints">画质 · 声音 · 操作</span>
+    </div>
+  </section>
+</div>
+<div class="dive-controls">
+  <output id="time">累计潜水 0 秒</output>
+  <output id="depth" aria-label="潜水深度">0 米</output>
+  <div class="depth-controls" aria-label="深度操作">
+    <button id="survey-sonar" type="button">声呐</button>
+    <button id="rise" type="button">上浮</button>
+    <button id="sink" type="button">下潜</button>
+  </div>
+  <button id="view" type="button" aria-label="切换第一人称" aria-pressed="false">跟随 ▾</button>
+  <button id="o" aria-label="打开菜单">☰</button>
+</div>
+<small class="credit">Abyssal Garden · Noniv / Maksymilian Dendra · MIT</small>
+<aside id="panel" hidden aria-label="潜水记录">
+  <header><h2 id="panel-title"></h2><button id="close-panel">收起</button></header>
+  <p id="panel-status" role="status"></p>
+  <ol id="ranks"></ol>
+  <div class="panel-actions">
+    <button id="more-ranks" hidden>更多</button>
+    <button id="refresh-rank" hidden>刷新</button>
+    <button id="panel-report" hidden>AI 报告</button>
+  </div>
+</aside>
