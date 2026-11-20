@@ -1,0 +1,1 @@
+{"name":"abyssal-garden-cold-smoke","private":true,"type":"module","scripts":{"build":"node build.mjs","start":"node serve.mjs","check":"node test/check.mjs"}}

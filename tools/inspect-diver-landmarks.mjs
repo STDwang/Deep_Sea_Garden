@@ -1,0 +1,1 @@
+import vm from 'node:vm';import fs from 'node:fs';const ctx=vm.createContext({console,performance});vm.runInContext(fs.readFileSync('minitool/vendor/08_human.js','utf8'),ctx);const H=ctx.Human,sk=H.Skeleton.build(H.measure({stature:1.78,mass:73,bodyFat:16}));for(const name of ['pelvis','head','eye_L','eye_R','neck_hi'])console.log(name,sk.bones[sk.idx[name]].J);

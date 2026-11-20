@@ -1,0 +1,12 @@
+import {readFile,writeFile} from 'node:fs/promises';
+import vm from 'node:vm';
+const upstream=await readFile('D:/Ai_RedTool/red_skiing/src/08g_human.js','utf8');
+const core=upstream.slice(0,upstream.indexOf('// ---------------------------------------------------------------- Human: the stress poses'));
+await writeFile(new URL('../minitool/vendor/08_human.js',import.meta.url),'/*! Cold Smoke Human: Copyright (c) 2026 Huisky, MIT. Anatomical body, 59-bone skeleton and skinning, unmodified core. */\n'+core);
+const ctx=vm.createContext({console,performance});vm.runInContext(core,ctx);
+const H=ctx.Human,M=H.measure({stature:1.78,mass:73,bodyFat:16,def:.65}),sk=H.Skeleton.build(M),body=H.Body.build(sk),bind=H.Skeleton.fk(sk,sk.bones.map(()=>H.q.id())),c=H.Body.prepare(body,bind);
+console.log('Generating reference anatomical body and skin weights…');
+const mesh=H.Mesh.mesh(c,.010,{pad:.007,dist:(c,x,y,z)=>H.Body.dist(c,x,y,z)-.004,grad:H.Body.grad}),W=H.Skin.weights(body,mesh,c,{smooth:4}),N=H.Mesh.normals(mesh.pos,mesh.idx);
+const round=a=>Array.from(a,q=>Math.round(q*1e5)/1e5);
+await writeFile(new URL('../minitool/src/13_human_mesh.js',import.meta.url),'/*! Generated from Cold Smoke Human procedural distance field, Copyright (c) 2026 Huisky, MIT. Regenerate: node tools/migrate-human.mjs */\nconst DiverHumanMesh='+JSON.stringify({parameters:M.p,pos:round(mesh.pos),normal:round(N),idx:Array.from(mesh.idx),bi:Array.from(W.bi),bw:round(W.bw)})+';\n');
+console.log(JSON.stringify({bones:sk.n,vertices:mesh.nv,triangles:mesh.nt}));
