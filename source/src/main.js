@@ -3,8 +3,8 @@
 // ============================================================================
 const $ = (id) => document.getElementById(id);
 const canvas = $('c'), info = $('i'), body = document.body;
-// a phone held upright gets the page turned on its side (see template.html)
-const rot = matchMedia('(orientation:portrait) and (pointer:coarse)');
+// a phone held upright gets the page turned on its side (see xhs/index.html)
+const rot = matchMedia('(orientation: portrait)');
 // loading bar: each stage glides it to `to` (the share done) over ~`ms` on the compositor, so it moves while this
 // thread is busy
 let loaded = 0, dead; // dead: the graphics device was lost
@@ -16,7 +16,7 @@ const say = (m, to, ms) => {
   return new Promise((r) => { a.ready.then(() => setTimeout(r)); setTimeout(r, document.hidden ? 0 : 1e3); });
 };
 const fail = (m) => { throw new Error(m, { cause: 1 }); }; // cause marks a message that is shown as it is
-if (!navigator.gpu) fail('此场景需要 WebGPU，请使用较新版本的 Chrome 或 Edge。');
+if (!navigator.gpu) fail('当前小红书容器无法启动 WebGPU 场景。');
 const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
 if (!adapter) fail('未找到 WebGPU 适配器。');
 $('w').hidden = !!navigator.userAgentData; // only Chromium-based browsers have it
@@ -26,7 +26,6 @@ device.addEventListener('uncapturederror', (e) => console.error('GPU: ' + e.erro
 // out of memory or a GPU timeout: reload a level lower, or on Low say what happened
 device.lost.then((l) => {
   if (l.reason === 'destroyed') return; // the page is closing
-  if (LV < 2) { keep('dsea', LV + 1); location.reload(); }
   dead = body.className = 'l e'; $('s').textContent = '显卡设备已丢失，请刷新页面重试。';
 });
 const ctx = canvas.getContext('webgpu'), FMT = navigator.gpu.getPreferredCanvasFormat();
@@ -165,9 +164,6 @@ const SUN = (() => { const v = [0.27, 1, -0.24], l = hypot(...v); return v.map((
 
 // ---------------------------------------------------------------- world generation
 await say('正在雕刻海床…', 0.25, 1200);
-// marks a load in progress (quality.js); leaving the page before it ends is not a crash
-keep('dseaLoad', 1);
-addEventListener('pagehide', () => keep('dseaLoad', ''));
 let D;
 {
   const prims = primBuffer();
@@ -262,7 +258,7 @@ const flyPts = [];
 // per-frame float state lives in one preallocated array, so the frame loop allocates no heap numbers
 const F = new Float64Array(32), P6 = new Float64Array(6);
 // RC: rendered camera position. F[CX..CZ] is the diver's body; in third person
-// the two differ. SV/POSES keep addressing F as before.
+// the two differ. POSES uses F for the camera presets.
 const RC = new Float64Array(3);
 let diver = null;
 const CX = 0, CY = 1, CZ = 2, YAW = 3, PIT = 4, FX = 5, FY = 6, FZ = 7, RX = 8, RZ = 9, UX = 10, UY = 11, UZ = 12, VX = 13, VY = 14, VZ = 15, TIME = 16, FLT = 17, LAST = 18, GPU = 19, HUDT = 20, SPL = 21, MX = 22, MY = 23, MZ = 24;
@@ -389,9 +385,9 @@ Wd.glints = Wd.volD = Wd.gm = T.vb = T.ib = T.wp = T.wn = 0;
 
 // ---------------------------------------------------------------- render targets (rebuilt on resize)
 // The scene is drawn at `pix` pixels and scaled up to the window. frame() tunes it and the draw distance scale `det`
-// for 60 fps; both start where the last visit left them.
-const PIXMAX = 2560 * 1440, PIXMIN = mob ? 25e4 : 5e5, DETMIN = 0.4;
-let W = 0, H = 0, DW = 0, DH = 0, pix = +SV[1] || (LV > 1 ? 41e4 : mob ? 1280 * 720 : PIXMAX), det = +SV[2] || 1, dynN = 0, dynT = 0, dynG = 0, dynGN = 0, dynBad = 0, dynOk = 0, dynWait = 3;
+// for 60 fps.
+const PIXMAX = 410000, PIXMIN = 250000, DETMIN = 0.4;
+let W = 0, H = 0, DW = 0, DH = 0, pix = PIXMAX, det = 1, dynN = 0, dynT = 0, dynG = 0, dynGN = 0, dynBad = 0, dynOk = 0, dynWait = 3;
 let passScene, passRays, passBlur, bgBlur, passPost, bgRays, bgPost, bloomPass = [], bloomBG = [], targets = [];
 const NB = 6;
 function resize() {
@@ -635,13 +631,12 @@ function frame(now) {
     else if (a > 17.6) { dynOk = 0; if (++dynBad > 1) { k = 15 / a; dynBad = 0; dynWait = min(dynWait * 2, 60); } }
     // at the display's rate there is no telling if there is room, so try a little more now and then
     else { dynBad = 0; if (a < 12.5) k = 15 / a; else if (++dynOk > dynWait) { k = 1.17; dynOk = 0; } }
-    k = k < 0.5 ? 0.5 : k > 1.7 ? 1.7 : k; const top = min(PIXMAX, DW * DH), mid = max(top / 2, PIXMIN), was = pix + det;
+    k = k < 0.5 ? 0.5 : k > 1.7 ? 1.7 : k; const top = min(PIXMAX, DW * DH), mid = max(top / 2, PIXMIN);
     // too slow: pixels down to `mid` first, then draw distance, then the remaining pixels; faster goes back the same way
     if (k < 1 ? pix > mid || det <= DETMIN : pix < mid || det >= 1) {
       const end = k < 1 ? (det > DETMIN ? mid : PIXMIN) : det < 1 ? mid : top;
       pix *= k; if (k < 1 ? pix < end : pix > end) pix = end;
     } else { det *= sqrt(k); det = det < DETMIN ? DETMIN : det > 1 ? 1 : det; }
-    if (was !== pix + det) keep('dsea', [LV, pix < top ? pix | 0 : '', det]); // nothing kept at full resolution
     dynN = dynT = dynG = dynGN = 0; resize();
   }
   F[TIME] += dt;
@@ -812,13 +807,11 @@ const ui = (m) => {
 };
 const go = () => {
   sound(); ui(false); bDive.textContent = '继续';
-  // phones: go fullscreen and ask for landscape; where that is refused the CSS rotation still applies
-  if (mob) document.documentElement.requestFullscreen?.()?.then(() => screen.orientation.lock('landscape')).catch(() => 0);
+
 
 };
-bDive.onclick = go; $('o').onclick = () => ui(true);
+bDive.addEventListener('click', go); $('o').addEventListener('click', () => ui(true));
 // detail buttons: the current level is lit, the others reload the page with theirs
-$('q').querySelectorAll('button').forEach((b, i) => { if (i === 2 - LV) b.className = 'on'; else b.onclick = () => { keep('dsea', 2 - i); location.reload(); }; });
 
 
 // draw the first frame and wait for the GPU to finish it (pipelines get compiled on first use) before the reveal
@@ -840,6 +833,5 @@ $('survey-sonar').addEventListener('click', () => { if (!menu && !photo) sonar()
 
 await say('Letting the light in…', 1, 400);
 render(); await Q.onSubmittedWorkDone();
-setTimeout(keep, 15e3, 'dseaLoad', ''); // the load counts as survived after 15 s of frames
 ui(true);
 requestAnimationFrame((t) => { F[LAST] = t; requestAnimationFrame(frame); });

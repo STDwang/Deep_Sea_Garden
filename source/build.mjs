@@ -1,36 +1,39 @@
-// Bundles src/*.js into the single self-contained ../index.html
-//   npm run build            minified
-//   npm run build:readable   unminified, for debugging
-//   npm run build:dev        ../dev.html: unminified, plus the development tools in src/dev.js
-import { readFileSync, writeFileSync } from 'node:fs';
-import { gzipSync } from 'node:zlib';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+// Builds the Xiaohongshu package and a browser preview from the same assets.
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { transformSync } from 'esbuild';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const FILES = ['quality.js', 'math.js', 'shaders.js', 'human.js', 'human-mesh.js', 'diver.js', 'world.js', 'journal.js', 'main.js', 'audio.js']; // concatenation order matters
-const dev = process.argv.includes('--dev'), readable = dev || process.argv.includes('--readable');
-const out = dev ? 'dev.html' : 'index.html';
-if (dev) FILES.push('dev.js');
-
-let js = FILES.map((f) => readFileSync(path.join(here, 'src', f), 'utf8')).join('\n');
-const tpl = readFileSync(path.join(here, 'template.html'), 'utf8');
-// everything runs inside one async function; startup errors are shown on screen
-const wrap = (body) => `(async()=>{${body}\n})().catch(e=>{console.error(e);document.body.className='l e';document.getElementById('s').textContent=(e.cause?'':'启动失败：')+e.message});`;
-
-let html;
-if (readable) {
-  html = tpl.replace('/*SCRIPT*/', () => wrap(js));
-} else {
-  // shrink the WGSL inside /*wgsl*/ template literals, then minify the JS and the page's CSS
-  const minWgsl = (s) => s.replace(/\/\/[^\n]*/g, '').replace(/\s+/g, ' ').replace(/ ?([{}()\[\];,:=+\-*\/<>&|!%@]) ?/g, '$1').trim();
-  js = js.replace(/\/\*wgsl\*\/`([^`]*)`/g, (_, w) => '`' + minWgsl(w) + '`');
-  const code = transformSync(wrap(js), { minify: true, target: 'es2022', legalComments: 'none', charset: 'utf8' }).code.trim();
-  const css = (_, s) => '<style>' + transformSync(s, { loader: 'css', minify: true }).code.trim();
-  html = tpl.replace(/<style>([^]*?)(?=<\/style>)/, css).replace(/>\s+</g, '><').replace('/*SCRIPT*/', () => code).replace(/<script>\s+/, '<script>').replace(/\s+<\/script>/, '</script>');
+const root = new URL('../', import.meta.url);
+const output = new URL('.tmp/xhs-garden/', root);
+const previewOutput = new URL('xhs-preview.html', root);
+const read = path => readFile(new URL(path, root), 'utf8');
+const sources = [
+  'src/quality.js', 'src/math.js', 'src/shaders.js', 'src/human.js', 'src/human-mesh.js',
+  'src/diver.js', 'src/world.js', 'src/journal.js', 'xhs/journal-storage.js',
+  'src/main.js', 'src/audio.js', 'xhs/platform.js',
+];
+const [html, style, license, humanLicense, ...scripts] = await Promise.all([
+  read('source/xhs/index.html'), read('source/xhs/style.css'),
+  read('LICENSE'), read('source/src/HUMAN-LICENSE'),
+  ...sources.map(file => read('source/' + file)),
+]);
+const body = scripts.join('\n');
+const js = transformSync(`(async()=>{${body}\n})().catch(error=>{
+  console.error(error); document.body.className='l e'; document.getElementById('s').textContent=error.message;
+});`, { target: ['chrome61', 'es2017'], minify: true, charset: 'utf8' }).code;
+if (/requestFullscreen|requestPointerLock|screen\.orientation|localStorage|window\.open|\.(?:fetch|eval)\s*\(/.test(js)) {
+  throw new Error('Unexpected unsupported API in Xiaohongshu build');
 }
-html = html.replace('<script>', () => '<script>/*!\n' + readFileSync(path.join(here, 'src/HUMAN-LICENSE'), 'utf8') + '\n*/\n');
-writeFileSync(path.join(here, '..', out), html);
-const gz = gzipSync(Buffer.from(html), { level: 9 }).length;
-console.log(`${out}: ${(html.length / 1024).toFixed(1)} kB${readable ? ' (readable)' : ''}, ${(gz / 1024).toFixed(1)} kB gzipped`);
+await mkdir(output, { recursive: true });
+await writeFile(new URL('index.html', output), html);
+const app = '/*!\n' + license + '\n' + humanLicense + '\n*/\n' + js;
+await writeFile(new URL('app.js', output), app);
+await writeFile(new URL('style.css', output), style);
+// The browser preview uses the same assets without requiring a server or extraction.
+// The upload package above keeps its external CSS and JavaScript for container CSP.
+const preview = html
+  .replace('<title>深海潜水员</title>', '<title>深海潜水员 · 小红书小工具预览</title>')
+  .replace('<link rel="stylesheet" href="./style.css">', () => `<style>${style}</style>`)
+  .replace('<script src="./app.js" defer></script>', () => `<script>${app.replace(/<\/script/gi, '<\\/script')}</script>`);
+await writeFile(previewOutput, preview);
+console.log('Xiaohongshu build:', Buffer.byteLength(html), 'HTML bytes and', Buffer.byteLength(js), 'script bytes.');
+console.log('Browser preview: xhs-preview.html');

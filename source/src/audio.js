@@ -64,6 +64,9 @@ function mkSound(ac) {
 }
 // called on every click / key / touch: builds the graph once and resumes it when the browser allows
 function sound() {
+  try { startSound(); } catch (error) { console.warn("Audio unavailable", error); }
+}
+function startSound() {
   if (!AC) { AC = new AudioContext({ latencyHint: 'playback' }); setInterval(mkSound(AC), 100); }
   if (AC.state === 'suspended' && !document.hidden) AC.resume();
 }
