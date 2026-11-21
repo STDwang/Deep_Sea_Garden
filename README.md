@@ -2,8 +2,6 @@
 
 小红书小工具「深海潜水员」使用 WebGPU 实时生成海底世界。正式入口为离线包根目录的 `index.html`。
 
-[下载小红书离线包](deep-sea-survey-xhs.zip)
-
 ## 海底有什么
 
 - **海藻森林** 随水流摇曳，闪烁着细小的金色和绿色光斑
@@ -63,7 +61,13 @@ npm --prefix source run build
 node --test source/test/diver.test.mjs
 ```
 
-构建将 `index.html`、`app.js` 和 `style.css` 写入 `.tmp/xhs-garden/`。制作上传包时，将这三个文件放在 ZIP 根目录。用 Chrome 或 Edge 打开生成的 `xhs-preview.html`，可以在本地预览同一页面和脚本。
+构建将 `index.html`、`app.js` 和 `style.css` 写入 `.tmp/xhs-garden/`。用 Chrome 或 Edge 打开生成的 `xhs-preview.html`，可以在本地预览同一页面和脚本。
+
+需要上传到小红书时，在项目根目录生成本地离线包。ZIP 的根目录包含上述三个文件。
+
+```powershell
+Compress-Archive -Path .tmp/xhs-garden/index.html,.tmp/xhs-garden/app.js,.tmp/xhs-garden/style.css -DestinationPath deep-sea-survey-xhs.zip -Force
+```
 
 - `source/xhs/index.html` 和 `source/xhs/style.css` 定义小工具界面。
 - `source/xhs/platform.js` 和 `source/xhs/journal-storage.js` 对接小红书容器。

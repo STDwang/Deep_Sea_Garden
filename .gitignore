@@ -1,5 +1,6 @@
 node_modules/
 xhs-preview.html
+*.zip
 .tmp/
 .showcase/
 *.log
