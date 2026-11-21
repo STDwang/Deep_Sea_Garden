@@ -19,6 +19,9 @@ const MESAS = [
 ];
 // vertical ring arches: cx, cy, cz, yaw, major radius, minor radius, y squash
 const ARCHES = [
+  [162,-29,25,1.57,6,1.6,1.25],
+  [152,-30,-82,1.57,5,1.3,1.1],
+  [158,-30,-82,1.57,4,1.1,1.15],
   [-23, -9.5, -16, 0.3, 4.2, 1.4, 1.2],
   [0, -45, -34, 1.57, 14, 2.7, 1.2],
   [-40, -45, 44, 1.57, 10, 2.2, 1.3],
@@ -30,6 +33,7 @@ const HOLES = [
 ];
 // regions kept free of random mesas: ax, az, bx, bz, radius, softness
 const CLEARS = [
+  [82,24,163,25,13,8], [152,25,142,-82,13,8],
   [0, -45, 0, 35, 22, 10], [0, -86, 0, -86, 46, 12], [42, 24, 74, 6, 22, 10], [72, -26, 72, -26, 26, 10],
   [-60, -36, -60, 36, 13, 8], [-60, 42, -18, 46, 12, 8], [4, 58, 8, 100, 24, 10], [-34, -74, -56, -46, 11, 8],
 ];
@@ -310,6 +314,13 @@ function makeWorld(D, T, flyPts, POSES) {
   rseed(12);
   for (const b of [[7, 3.2, 1.3, 4], [8.4, 4.6, 1.0, 6], [9.6, 2.6, 1.5, 4], [11, 5, 1.1, 5], [8, -3.6, 1.2, 4], [12.5, 2, 1.2, 6], [9, 3.9, 0.8, 4]]) { const p = rel(3, b[0], b[1]), c = POSES[3]; let ux = (c[0] - p[0]) * 0.07, uz = (c[2] - p[1]) * 0.07; const l = hypot(ux, 1, uz); solid(b[3], p[0], gy(p[0], p[1]) - 0.1, p[1], b[2], qFromY(ux / l, 1 / l, uz / l), 4, rnd(), 1, 0); }
   for (let i = 0; i < 9; i++) { const a = rnd() * TAU; const x = -5 + cos(a) * rr(1.2, 2.6), z = -4 + sin(a) * rr(1.5, 4); solid(6, x, gy(x, z) + 0.05, z, rr(0.4, 0.9), qAxis(0, 1, 0, rnd() * 6), 4, rnd(), 1, 0); }
+  // Foreground beds frame the wreck and the grotto without blocking the swim lanes.
+  for (const [cx, cz, mat] of [[53, 24, 5], [63, 19, 5], [-5, 77, 6], [13, 79, 6]]) {
+    for (let i = 0; i < 9; i++) {
+      const a = rnd() * TAU, r = rr(.6, 3.5), x = cx + cos(a) * r, z = cz + sin(a) * r;
+      solid(7 + i % 2, x, gy(x, z) - .12, z, rr(.55, 1.55), qAxis(0, 1, 0, a), mat, rnd(), 1, 0);
+    }
+  }
 
   // --- bubbles
   const VENTS = [[4, -44, -3], [4.5, -44, -3.5], [-1, -44, 2], [2, -44, -1], [5.5, -44, -7], [3, -44, -9], [6, -44, -90], [8, -44, -84], [4, -44, -93], [-9, -44, 3], [5, -35, -86], [9, -37, -92], [40, -44, 20], [-56, -44, 12], [10, -44, 80], [-2, -44, 30], [0, -44, -30], [12, -44, 2], [6, -44, -2], [46, -44, 30], [-20, -44, -103], [-52, -44, -12], [4, -44, 70], [9, -44, -74], [4, -44, -78], [14, -44, 26], [26, -44, 40], [-45, -44, -64], [-55, -44, -40], [-58, -44, 22], [-40, -44, 40], [-14, -44, 45], [-1, -44, -9], [-7, -44, -6]];
@@ -368,7 +379,15 @@ function makeWorld(D, T, flyPts, POSES) {
   rseed(14);
   const SCH = [[-2, -36, -10, 15, 520, 0.3, 1, 0.945], [8, -30, -70, 22, 420, 0.32, -1], [48, -30, 14, 18, 360, 0.3, 1], [-58, -30, -8, 11, 420, 0.28, -1, 0.3], [8, -36, 84, 16, 320, 0.28, 1],
     [-90, -28, -70, 25, 300, 0.3, 1], [95, -30, 70, 25, 300, 0.3, -1], [0, -22, 20, 30, 380, 0.34, -1], [-30, -30, -100, 18, 300, 0.3, 1], [16, -36, 30, 12, 300, 0.3, 1], [-48, -34, -58, 12, 300, 0.3, -1], [-45, -35, 38, 14, 320, 0.3, 1]];
-  for (const s of SCH) { const ss = s[7] === undefined ? rnd() : s[7]; for (let i = 0; i < s[4]; i++) fish.push(s[0], s[1], s[2], s[3], rnd(), s[6] * 1.9 / s[3], s[5], ss); }
+  // Each school keeps one silhouette and palette. Density scales with the existing quality level.
+  const species = [0, 0, 1, 2, 2, 0, 1, 0, 0, 1, 2, 2];
+  SCH.push([4, -36, -4, 5, 74, .5, 1, .42], [54, -31, 23, 6, 88, .55, -1, .03], [4, -33, 76, 5, 95, .44, 1, .6]);
+  for (let k = 0; k < SCH.length; k++) {
+    const [x, y, z, radius, count, size, direction, phase = rnd()] = SCH[k];
+    const kind = species[k] ?? k - species.length;
+    const limit = radius < 8 ? count : round(count / sqrt(THIN));
+    for (let i = 0; i < limit; i++) fish.push(x, y, z, radius, rnd(), direction * (radius < 8 ? .85 : 1.9) / radius, size, phase + kind);
+  }
   const mantas = [];
   for (const m of [[1, -28, 3.5, 14, 3.012, 0.085, 3.6, 0.1], [49, -31, 24.5, 5, 0.029, -0.08, 3.7, 0.4], [0, -14, -80, 34, 0.3, 0.06, 5.2, 0.7], [-50, -18, 20, 26, 5, -0.075, 3.8, 0.55], [10, -16, 86, 26, 2.2, 0.07, 4.4, 0.85], [20, -11, -20, 46, 4.2, -0.045, 5.6, 0.25]]) mantas.push(...m);
 
@@ -554,4 +573,63 @@ function meshFish() {
   const a = m.v(-0.33, 0, 0), b = m.v(-0.56, 0.2, 0), c = m.v(-0.47, 0, 0), d = m.v(-0.56, -0.2, 0);
   m.tri(a, b, c); m.tri(a, c, d);
   return m;
+}
+
+// Olive sea turtle, nose +z. The signed mesh channel labels animated flippers.
+function meshTurtle() {
+  const turtle = new Mesh();
+  const append = (mesh, part) => {
+    const first = turtle.p.length / 3;
+    for (let i = 0; i < mesh.p.length; i += 3) turtle.v(mesh.p[i], mesh.p[i + 1], mesh.p[i + 2], part);
+    for (const index of mesh.i) turtle.i.push(first + index);
+  };
+  const oval = (x, y, z, sx, sy, sz, part, detail = 1) => {
+    append(icosphere(detail, (a, b, c) => [x + a * sx, y + b * sy, z + c * sz]), part);
+  };
+  oval(0, .045, 0, .43, .22, .58, 0, 2);
+  oval(0, -.075, 0, .407, .095, .55, .18);
+  oval(0, -.035, .52, .13, .095, .22, .34);
+  oval(0, .005, .731, .145, .115, .165, .34);
+  oval(0, -.042, .831, .102, .052, .075, .46);
+  oval(0, -.07, -.55, .056, .037, .14, .34);
+  for (const side of [-1, 1]) {
+    oval(side * .124, .044, .785, .023, .026, .029, .58);
+    const front = new Mesh();
+    front.tube([[side * .28, -.03, .29], [side * .49, -.06, .27], [side * .71, -.10, .155], [side * .91, -.12, -.03], [side * 1.02, -.115, -.2]], i => [.08, .12, .112, .071, .012][i], 8);
+    for (let i = 0; i < front.p.length; i += 3) front.p[i + 1] = -.07 + (front.p[i + 1] + .07) * .36;
+    append(front, .8 * side);
+    const rear = new Mesh();
+    rear.tube([[side * .21, -.065, -.37], [side * .37, -.078, -.48], [side * .50, -.086, -.59], [side * .54, -.08, -.67]], i => [.064, .10, .083, .015][i], 7);
+    for (let i = 0; i < rear.p.length; i += 3) rear.p[i + 1] = -.075 + (rear.p[i + 1] + .075) * .35;
+    append(rear, side);
+  }
+  return turtle;
+}
+
+function meshJelly() {
+  const jelly = new Mesh(), rings = [];
+  const profile = [[.01, .52], [.32, .47], [.65, .3], [.86, .08], [.89, -.05], [.78, -.13]];
+  for (const [radius, height] of profile) {
+    const ring = [];
+    for (let i = 0; i < 20; i++) {
+      const angle = i / 20 * TAU;
+      ring.push(jelly.v(radius * cos(angle), height, radius * sin(angle), 0));
+    }
+    rings.push(ring);
+  }
+  for (let j = 1; j < rings.length; j++) {
+    for (let i = 0; i < 20; i++) {
+      const next = (i + 1) % 20;
+      jelly.quad(rings[j - 1][i], rings[j][i], rings[j][next], rings[j - 1][next]);
+    }
+  }
+  for (let i = 0; i < 9; i++) {
+    const a = i / 9 * TAU, r = i % 2 ? .38 : .64, points = [];
+    for (let j = 0; j < 7; j++) {
+      const t = j / 6;
+      points.push([cos(a) * (r - .27 * t) + sin(t * 6 + a) * .13 * t, -.1 - t * (1.25 + .2 * cos(a)), sin(a) * (r - .27 * t)]);
+    }
+    jelly.tube(points, j => .035 - j * .0045, 4, true, () => 1);
+  }
+  return jelly;
 }

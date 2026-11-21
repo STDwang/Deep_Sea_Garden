@@ -2,7 +2,7 @@
 <html lang=zh-CN>
 <head>
 <meta charset=utf-8>
-<title>深海花园</title>
+<title>深海潜水员</title>
 <meta name=viewport content="width=device-width,initial-scale=1">
 <meta name=theme-color content=#03131c>
 <style>
@@ -16,8 +16,8 @@ body {
   -webkit-user-select: none; user-select: none;
 }
 /* a phone held upright gets the whole page turned on its side, so the scene is always landscape */
-@media (orientation: portrait) and (pointer: coarse) {
-  body { width: 100dvh; height: 100dvw; transform-origin: 0 0; transform: rotate(90deg) translateY(-100%); }
+@media (orientation: portrait) {
+  body { width: 100vh; height: 100vw; width: 100dvh; height: 100dvw; transform-origin: 0 0; transform: rotate(90deg) translateY(-100%); }
 }
 
 /* the scene: blurred and dimmed behind the menu, comes into focus when you dive */
@@ -34,6 +34,7 @@ body:not(.g) canvas { filter: blur(1vmax) brightness(.5); transform: scale(1.06)
   padding: 1em 1em 4.5em; text-align: center; background: radial-gradient(#03131c00 30%, #03131ccc);
   transition: opacity .5s, visibility .5s;
 }
+.g #m { pointer-events: none; }
 .g #m, .m #l, .l #g { opacity: 0; visibility: hidden; }
 h1 {
   margin: 0; font: 900 4.4em/1 system-ui, sans-serif; letter-spacing: .05em; text-transform: uppercase;
@@ -116,39 +117,77 @@ button:active, a:active { transform: translateY(.1em); filter: brightness(.9); }
   position: absolute; top: 1em; left: 1.2em; margin: 0; font: .8em/1.6 ui-monospace, Consolas, monospace;
   white-space: pre-wrap; text-shadow: 0 1px 4px #000; pointer-events: none;
 }
+#journal-details { text-align: left; padding: .45em .8em; border-radius: .7em; background: #03131ce6; font-size: .85em; }
+#journal-count { cursor: pointer; padding: .2em 0; }
+#journal-entries { margin: .4em 0; padding-left: 1.4em; max-height: 23vh; overflow: auto; color: #bcd3d7; }
+#journal-entries li { padding: .18em 0; }
+#journal-entries .recorded { color: #a9f4d5; }
+#journal-save { color: #ffe7ac; }
+#journal-notice { display: none; pointer-events: none; position: absolute; top: 3.6em; left: 50%; transform: translateX(-50%);
+  padding: .5em 1em; border-radius: 1em; background: #03222dee; color: #dcfff1; white-space: nowrap; font-size: .9em; }
+.g #journal-notice:not(:empty) { display: block; }
+#survey-sonar {display:none} .g #survey-sonar {display:block;position:absolute;right:1em;bottom:1em}
 </style>
-</head>
+<link rel="stylesheet" href="./style.css"></head>
 <body class=l>
 <canvas id=c></canvas>
-<div id=m>
-  <h1>深海花园</h1>
-  <div id=a>
-    <div id=l><div id=p><i id=b></i></div><p id=s>正在潜入…</p><p id=w hidden>使用 Google Chrome 可获得最佳体验</p></div>
-    <div id=g>
-      <button id=d>潜入</button>
-      <p id=q><span>画质</span><button>低</button><button>中</button><button>高</button></p>
-      <div id=k>
-        <p>
-          <i><b>W</b><b>A</b><b>S</b><b>D</b></i>游动
-          <i><b>Q</b><b>E</b></i>下潜 / 上浮
-          <i><b>Shift</b></i>加速
-          <i><b>1</b>–<b>6</b></i>观景点
-        </p>
-        <p>
-          <i><b>Esc</b></i>菜单
-          <i><b>M</b></i>静音
-          <i><b>H</b></i>统计
-        </p>
+<div id="m">
+  <section class="dock" aria-label="深海潜水员">
+    <h1>深海潜水员</h1>
+    <div id="l"><div id="p"><i id="b"></i></div><p id="s">正在准备海底世界…</p><p id="w" hidden></p></div>
+    <div id="g">
+      <button id="start">关注作者 · 开始体验</button>
+      <button id="d" class="enter">直接进入游戏</button>
+      <details id="journal-details"><summary id="journal-count">海底日志</summary><p>外海测绘 · 发出声呐查看测站方位，抵近后再次扫描。两站采样后返回石鲸尾归档。</p><ol id="journal-entries"></ol><p id="journal-save" role="status"></p></details>
+      <div class="subline">
+        <span id="home-time">累计潜水 0 秒</span>
+        <button id="report" hidden>AI 潜水报告</button>
       </div>
-      <p id=h>按住前进 · 滑动转向 · 第二根手指加速</p>
+      <div class="actions">
+        <button id="note" hidden>发布笔记</button>
+        <button id="share" hidden>分享海底</button>
+        <button id="comment" hidden>写评论</button>
+        <button id="rank" hidden>潜水榜</button>
+      </div>
     </div>
-  </div>
+    <div class="dock-foot">
+      <details class="settings">
+        <summary><span class="tri">▶</span> 探索设置</summary>
+        <div class="actions">
+          <button id="audio">关闭声音</button>
+          <label>画质 <select id="quality"><option value="410000">标准</option><option value="250000">省电</option></select></label>
+          <label>观景点 <select id="spot" aria-label="观景点"><option value="">选择地点</option></select></label>
+        </div>
+        <p>电脑按 WASD 游动，鼠标拖动环顾，滚轮调整距离。Shift 加速，配合 E 可跃出水面。触屏按住前进，拖动转向，双指加速。长按上浮或下潜可调整深度。</p>
+      </details>
+      <span class="hints">画质 · 声音 · 操作</span>
+    </div>
+  </section>
 </div>
-<p id=f><a href=https://github.com/STDwang/Deep_Sea_Garden target=_blank rel=noopener><svg viewBox="0 0 16 16"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>GitHub</a></p>
-<button id=o aria-label=菜单>≡</button>
+<div class="dive-controls">
+  <output id="time">累计潜水 0 秒</output>
+  <output id="depth" aria-label="潜水深度">0 米</output>
+  <div class="depth-controls" aria-label="深度操作">
+    <button id="survey-sonar" type="button">声呐</button>
+    <button id="rise" type="button">上浮</button>
+    <button id="sink" type="button">下潜</button>
+  </div>
+  <button id="view" type="button" aria-label="切换第一人称" aria-pressed="false">跟随 ▾</button>
+  <button id="o" aria-label="打开菜单">☰</button>
+</div>
+<small class="credit">Abyssal Garden · Noniv / Maksymilian Dendra · MIT</small>
+<aside id="panel" hidden aria-label="潜水记录">
+  <header><h2 id="panel-title"></h2><button id="close-panel">收起</button></header>
+  <p id="panel-status" role="status"></p>
+  <ol id="ranks"></ol>
+  <div class="panel-actions">
+    <button id="more-ranks" hidden>更多</button>
+    <button id="refresh-rank" hidden>刷新</button>
+    <button id="panel-report" hidden>AI 报告</button>
+  </div>
+</aside>
 <pre id=i></pre>
-<script>
-/*SCRIPT*/
-</script>
+<div id="journal-notice" role="status"></div>
+<script src="./app.js" defer></script>
 </body>
 </html>
