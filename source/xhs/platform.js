@@ -53,9 +53,8 @@ function updateTime() {
   const label = '累计潜水 ' + timeLabel(seconds());
   $('time').textContent = label;
   $('home-time').textContent = label;
-  $('depth').textContent = Math.round(Math.max(0, -diver.pos[1])) + ' 米';
   const mode = photo ? '摄影' : ['跟随','第一人称','远景'][diver.view];
-  $('view').textContent = mode + ' ▾';
+  if ($('view').textContent !== mode) $('view').textContent = mode;
   $('view').setAttribute('aria-pressed', String(!photo && diver.view === 1));
   $('view').setAttribute('aria-label', '当前' + mode + '，' + (photo ? '返回跟随视角' : ['切换第一人称','切换远景看潜水员','切换跟随视角'][diver.view]));
 }
@@ -109,6 +108,33 @@ $('spot').addEventListener('change', event => {
   spot.value = '';
   go();
 });
+
+// 触控偏好：灵敏度、上下反转、摇杆位置，保存在容器 Storage，下次打开沿用
+const prefsKey = 'garden-touch-prefs-v1';
+function applyTouchPrefs(prefs) {
+  const sens = Number(prefs.sens);
+  touchSens = [0.7, 1, 1.4].indexOf(sens) >= 0 ? sens : 1;
+  touchInvert = !!prefs.invert;
+  touch.swap = !!prefs.swap;
+  touch.reset();
+  $('touch-sens').value = String(touchSens);
+  $('touch-invert').checked = touchInvert;
+  $('touch-swap').checked = touch.swap;
+  document.documentElement.classList.toggle('swap', touch.swap);
+  gameHud.measure();
+}
+if (supports('getStorage')) {
+  Promise.resolve().then(() => miniTool.getStorage({ key: prefsKey })).then(result => {
+    if (result && typeof result.data === 'string' && result.data) applyTouchPrefs(JSON.parse(result.data));
+  }).catch(() => {});
+}
+function saveTouchPrefs() {
+  applyTouchPrefs({ sens: $('touch-sens').value, invert: $('touch-invert').checked, swap: $('touch-swap').checked });
+  if (!supports('setStorage')) return;
+  const data = JSON.stringify({ sens: touchSens, invert: touchInvert, swap: touch.swap });
+  Promise.resolve().then(() => miniTool.setStorage({ key: prefsKey, data })).catch(error => console.warn('Unable to save touch prefs', error));
+}
+for (const id of ['touch-sens', 'touch-invert', 'touch-swap']) $(id).addEventListener('change', saveTouchPrefs);
 
 const canReport = !!(xhs.AI && typeof xhs.AI.createModel === 'function');
 

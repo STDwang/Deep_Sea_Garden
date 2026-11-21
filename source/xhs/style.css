@@ -64,37 +64,170 @@ button, select { border-radius: 8px; padding: 7px 10px; box-shadow: none; letter
 .dock-foot .settings p { color: #a9ccc8; font-size: .9em; }
 .dock-foot .hints { color: #9fc4c2; font-size: .82em; white-space: nowrap; }
 
-/* ===== 游戏内控件 ===== */
-.dive-controls { display: none; }
+/* ===== 游戏内 HUD =====
+   布局：左上状态卡（深度 / 任务 / 日志）、顶部居中罗盘、右上视角与菜单、
+   右下拇指操作区（声呐 / 上浮下潜 / 巡游 / 灯光）、左下浮动摇杆（触屏）。
+   竖屏时 body 整体旋转，因此尺寸一律用 % 或 px，不使用 vw / vh。 */
+.dive-controls { display: none; --sl: max(12px, env(safe-area-inset-left)); --sr: max(12px, env(safe-area-inset-right)); }
 .g .dive-controls { display: block; }
-#time, #o, #panel { position: absolute; }
-#time {
-  bottom: 14px; left: 12px; padding: 5px 11px; color: #dff8f2;
-  background: #072530cc; border: 1px solid #4f8f8a66; border-radius: 12px;
-  font-size: .88em; pointer-events: none; text-shadow: 0 1px 3px #000;
+#panel { position: absolute; }
+.g #i { top: auto; bottom: 70px; left: 50%; transform: translateX(-50%); }
+
+/* 左上：状态卡 */
+.hud-status {
+  position: absolute; top: 10px; left: var(--sl); width: 186px; box-sizing: border-box;
+  padding: 8px 11px 7px; border-radius: 13px; color: #dff8f2; pointer-events: none;
+  background: linear-gradient(160deg, #0a2f3cdd, #04161ec4); border: 1px solid #7ff3ff2e;
+  box-shadow: 0 6px 18px #0008; text-shadow: 0 1px 3px #000a;
 }
-#depth {
-  position: absolute; top: 14px; left: 14px; padding: 5px 10px;
-  color: #dff8f2; background: #072530cc; border-radius: 10px;
-  font-size: .85em; pointer-events: none;
+.gauge { display: flex; align-items: center; gap: 9px; }
+.depth-bar { position: relative; width: 6px; height: 36px; border-radius: 3px; background: #0b2f3a; overflow: hidden; box-shadow: inset 0 0 0 1px #7ff3ff33; }
+.depth-bar b { position: absolute; inset: 0; transform-origin: top; transform: scaleY(0); background: linear-gradient(#9ff6ff, #1a8fb0 55%, #24408a); transition: transform .3s; }
+.gauge-text { display: flex; flex-direction: column; }
+#depth { font: 900 1.5em/1 system-ui, sans-serif; font-variant-numeric: tabular-nums; color: #fff; }
+#depth-tip { margin-top: 3px; font-size: .7em; letter-spacing: .1em; color: #8fe0d4; }
+.objective { margin: 8px 0 0; padding-top: 7px; border-top: 1px solid #7ff3ff22; font-size: .8em; line-height: 1.35; color: #eafffb; }
+.objective small { display: block; margin-top: 2px; font-size: .9em; color: #ffd98a; }
+.hud-meta { display: flex; justify-content: space-between; gap: 6px; margin: 5px 0 0; font-size: .68em; color: #9fc4c2; white-space: nowrap; }
+#time { font: inherit; color: inherit; }
+
+/* 顶部居中：罗盘 */
+.compass { position: absolute; top: 10px; left: 50%; width: min(40%, 380px); height: 32px; transform: translateX(-50%); pointer-events: none; }
+#compass-ticks {
+  position: absolute; inset: 0; overflow: hidden; border-radius: 10px;
+  background: linear-gradient(#04161ea8, #04161e55); border-bottom: 1px solid #7ff3ff40;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 16%, #000 84%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 16%, #000 84%, transparent);
 }
-.g #i { top: 44px; }
-.depth-controls { position: absolute; right: 14px; bottom: 14px; display: flex; flex-direction: column; }
-.depth-controls button {
-  min-width: 48px; min-height: 42px; margin-top: 6px; color: #eafffb;
-  background: #082733dd; border: 1px solid #6fb8ab; border-radius: 10px;
-  font-size: .86em; touch-action: none;
+.tick {
+  position: absolute; left: 50%; top: 0; width: 44px; height: 100%; margin-left: -22px; box-sizing: border-box;
+  font: 700 11px/1 system-ui, sans-serif; font-style: normal; text-align: center; color: #9fd9d2; will-change: transform;
 }
-#view {
-  position: absolute; top: 12px; right: 64px; min-height: 42px; min-width: 48px;
-  color: #eafffb; background: #082733dd; border: 1px solid #6fb8ab; border-radius: 10px; font-size: .86em;
+.tick::before { content: ''; position: absolute; left: 50%; bottom: 3px; width: 1px; height: 5px; background: #bfeee8aa; }
+.tick.mid { padding-top: 6px; }
+.tick.mid::before { height: 7px; }
+.tick.major { padding-top: 5px; font-size: 13px; font-weight: 900; color: #fff; }
+.tick.major::before { width: 2px; height: 9px; margin-left: -1px; background: #fff; }
+.tick.major:first-child { color: #ffb48a; }
+.compass-mark { position: absolute; left: 50%; top: -1px; margin-left: -6px; border: 6px solid transparent; border-top-color: #7ff3ff; filter: drop-shadow(0 0 4px #7ff3ff); }
+#compass-goal { position: absolute; left: 50%; top: 23px; width: 0; height: 0; will-change: transform; }
+#compass-goal::before {
+  content: ''; position: absolute; left: -5px; top: -5px; width: 10px; height: 10px; transform: rotate(45deg);
+  background: #ffcf6b; box-shadow: 0 0 10px #ffcf6b; animation: goal-pulse 1.4s ease-in-out infinite alternate;
 }
-#view[aria-pressed="true"] { background: #10615f; }
-#o {
-  top: 12px; right: 14px; width: 42px; height: 42px; padding: 0;
-  background: #082733dd; color: #eafffb; border: 1px solid #6fb8ab;
-  border-radius: 11px; font-size: 1.2em; opacity: 1;
-  box-shadow: 0 4px 14px #001a1e88;
+#compass-goal span {
+  position: absolute; left: 0; top: 9px; transform: translateX(-50%); padding: 2px 8px; border-radius: 9px; white-space: nowrap;
+  background: #ffcf6bee; color: #2b1b00; font: 800 11px/1.3 system-ui, sans-serif; box-shadow: 0 3px 10px #0007;
+}
+#compass-goal.edge::before { animation-duration: .6s; }
+@keyframes goal-pulse { to { box-shadow: 0 0 2px #ffcf6b; opacity: .7; } }
+
+/* 顶部提示条位于目标标签下方 */
+.g #journal-notice { top: 74px; max-width: 70%; overflow: hidden; text-overflow: ellipsis; }
+
+/* 底部居中：洋流提示 */
+#stream-chip {
+  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); padding: 5px 14px; border-radius: 999px;
+  background: #0b4a5acc; border: 1px solid #7ff3ff88; color: #cffbff; font-size: 12px; pointer-events: none;
+  animation: chip-glow 1.4s ease-in-out infinite alternate;
+}
+@keyframes chip-glow { to { box-shadow: 0 0 16px #7ff3ffaa; } }
+
+/* HUD 按钮通用样式：半透明玻璃感，触控面积不小于 44px */
+.hud-corner button, .action-pad button {
+  position: static; display: flex; align-items: center; justify-content: center; min-width: 48px; min-height: 44px; margin: 0;
+  padding: 0 10px; border: 1px solid #7fd9cf80; border-radius: 13px; background: #082733c7; color: #eafffb;
+  font: 800 13px/1.1 system-ui, sans-serif; letter-spacing: 0; text-transform: none; opacity: 1;
+  box-shadow: 0 4px 14px #001a1e88; touch-action: none; -webkit-tap-highlight-color: transparent;
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); transition: transform .1s, background .15s;
+}
+.hud-corner button:hover, .action-pad button:hover { transform: none; filter: none; }
+.hud-corner button:active, .action-pad button:active { transform: scale(.93); background: #10615f; filter: none; }
+.action-pad button[aria-pressed="true"], #view[aria-pressed="true"] {
+  background: linear-gradient(#9ff6ff, #19c3d6); color: #03222d; border-color: #dffcff; box-shadow: 0 0 14px #19c3d6aa;
+}
+
+/* 右上：视角与菜单 */
+.hud-corner { position: absolute; top: 10px; right: var(--sr); display: flex; gap: 8px; }
+.g .hud-corner #o { display: flex; min-width: 44px; width: 44px; padding: 0; font-size: 1.2em; }
+.p .hud-corner #o { display: none; }
+
+/* 右下：拇指操作区（摇杆放右侧时镜像到左下，避免与右手摇杆冲突） */
+.action-pad {
+  position: absolute; right: var(--sr); bottom: max(12px, env(safe-area-inset-bottom));
+  display: grid; grid-template-columns: auto auto; grid-template-areas: "tog tog" "dep son";
+  gap: 8px; align-items: end; justify-items: end;
+}
+.swap .action-pad {
+  right: auto; left: var(--sl); grid-template-areas: "tog tog" "son dep"; justify-items: start;
+}
+.toggles { grid-area: tog; display: flex; gap: 8px; }
+.toggles button { min-height: 36px; padding: 0 12px; font-size: 12px; border-radius: 18px; }
+.depth-controls { grid-area: dep; display: flex; flex-direction: column; gap: 8px; }
+.depth-controls button { flex-direction: column; gap: 1px; width: 56px; min-height: 48px; padding: 0; font-size: 15px; }
+.depth-controls small { font-size: 10px; font-weight: 700; opacity: .85; }
+#survey-sonar {
+  grid-area: son; position: relative; width: 76px; height: 76px; padding: 0; border-radius: 50%;
+  border: 2px solid #9ff6ff; color: #fff; font-size: 15px; letter-spacing: .08em;
+  background: radial-gradient(circle at 50% 38%, #29c4d6, #0a4f63 72%);
+  box-shadow: 0 0 0 4px #19c3d62e, 0 6px 18px #000a;
+}
+#survey-sonar::before {
+  content: ''; position: absolute; inset: -7px; border-radius: 50%;
+  background: conic-gradient(#ffe7ac calc(var(--cd, 1) * 360deg), #ffffff12 0);
+  -webkit-mask: radial-gradient(closest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+  mask: radial-gradient(closest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+}
+#survey-sonar:not(.cooling)::before { background: #9ff6ff66; }
+#survey-sonar.cooling { filter: saturate(.55) brightness(.8); }
+#survey-sonar span { position: relative; }
+
+/* 左下：浮动摇杆（仅触屏） */
+#stick { display: none; position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; transition: opacity .25s; }
+.touch .g #stick { display: block; }
+#stick i { position: absolute; border-radius: 50%; }
+.stick-base { width: 108px; height: 108px; left: -54px; top: -54px; box-sizing: border-box; background: radial-gradient(#7ff3ff0d, #7ff3ff26 70%); border: 2px solid #bff8ff59; }
+.stick-sprint { width: 143px; height: 143px; left: -71.5px; top: -71.5px; box-sizing: border-box; border: 1.5px dashed #ffd27a66; opacity: 0; transition: opacity .2s; }
+.stick-knob {
+  width: 50px; height: 50px; left: -25px; top: -25px; opacity: .6;
+  background: radial-gradient(circle at 40% 35%, #f2ffff, #7fdfee 70%); box-shadow: 0 2px 10px #0008;
+}
+#stick:not(.on) { opacity: .4; }
+#stick.on .stick-sprint { opacity: 1; }
+#stick.on .stick-knob { opacity: .95; }
+#stick.sprint .stick-sprint { border: 2px solid #ffd27a; box-shadow: 0 0 16px #ffbf4766; }
+#stick.sprint .stick-knob { background: radial-gradient(circle at 40% 35%, #fff6dc, #ffbf47 70%); box-shadow: 0 0 18px #ffbf47; }
+
+/* 首次潜入的双指引导 */
+#touch-guide { display: none; position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .6s; }
+.touch .g #touch-guide { display: block; }
+#touch-guide.show { opacity: 1; }
+#touch-guide::after { content: ''; position: absolute; left: 50%; top: 24%; bottom: 24%; border-left: 1px dashed #7ff3ff40; }
+#touch-guide > div {
+  position: absolute; top: 40%; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 9px 16px; border-radius: 14px; background: #03131c99; border: 1px dashed #7ff3ff66; color: #eafffb; font-size: 12px;
+}
+#touch-guide b { font-size: 14px; }
+#touch-guide span { color: #9fd9d2; }
+.guide-stick { left: 12%; }
+.guide-look { right: 24%; }
+.swap #touch-guide .guide-stick { left: auto; right: 24%; }
+.swap #touch-guide .guide-look { right: auto; left: 12%; }
+
+/* 桌面端不显示触控偏好 */
+@media (pointer: fine) { .touch-prefs { display: none; } }
+.touch-prefs input { margin: 0 4px 0 0; vertical-align: -2px; }
+
+/* 矮屏手机横屏（及竖屏旋转后的窄高屏）：压缩 HUD */
+@media (max-height: 400px), (orientation: portrait) and (max-width: 420px) {
+  .hud-status { width: 168px; padding: 6px 9px; font-size: 14px; }
+  .depth-bar { height: 30px; }
+  .compass { height: 28px; }
+  #compass-goal { top: 20px; }
+  .g #journal-notice { top: 66px; }
+  #survey-sonar { width: 66px; height: 66px; }
+  .depth-controls button { width: 52px; min-height: 42px; }
+  .toggles button { min-height: 32px; }
 }
 /* ===== 右侧排行榜面板 ===== */
 #panel {
@@ -129,4 +262,3 @@ button, select { border-radius: 8px; padding: 7px 10px; box-shadow: none; letter
   #m { padding-left: 14%; }
 }
 
-.g .depth-controls #survey-sonar { position: static; }

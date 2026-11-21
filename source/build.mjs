@@ -9,7 +9,7 @@ const read = path => readFile(new URL(path, root), 'utf8');
 const sources = [
   'src/quality.js', 'src/math.js', 'src/shaders.js', 'src/human.js', 'src/human-mesh.js',
   'src/diver.js', 'src/world.js', 'src/journal.js', 'xhs/journal-storage.js',
-  'src/main.js', 'src/audio.js', 'xhs/platform.js',
+  'src/touch.js', 'src/hud.js', 'src/main.js', 'src/audio.js', 'xhs/platform.js',
 ];
 const [html, style, license, humanLicense, ...scripts] = await Promise.all([
   read('source/xhs/index.html'), read('source/xhs/style.css'),

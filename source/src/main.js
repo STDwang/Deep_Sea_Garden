@@ -445,8 +445,12 @@ if (hasTS) {
 
 // ---------------------------------------------------------------- frame
 let hud = false;
-let mdx = 0, mdy = 0, lkx = 0, lky = 0, l2x = 0, l2y = 0, hN = 0, hMax = 0, hMin = 1e9, hPer = 1e9, hLate = 0, hTot = 0, tId = -1, tN = 0, tx0 = 0, ty0 = 0, tx = 0, ty = 0;
+let mdx = 0, mdy = 0, lkx = 0, lky = 0, l2x = 0, l2y = 0, hN = 0, hMax = 0, hMin = 1e9, hPer = 1e9, hLate = 0, hTot = 0;
 let touchDepth = 0;
+// 双指触控：左侧浮动摇杆游动，右侧滑动环顾，捏合调整跟随距离（见 touch.js）
+const touch = createTouchControls({ radius: 54 });
+const touchLook = { x: 0, y: 0, zoom: 0 };
+let touchSens = 1, touchInvert = false;
 let TANH = 0.6;
 const NEAR = 0.1, EXPO = 0.62, RAYS = 0.54;
 const submitList = [null];
@@ -641,12 +645,15 @@ function frame(now) {
   }
   F[TIME] += dt;
   {
-    // touch: holding the finger away from where it went down keeps turning, like a joystick
-    if (tId >= 0) {
-      const tr = 4 / (innerWidth < innerHeight ? innerWidth : innerHeight); let jx = (tx - tx0) * tr, jy = (ty - ty0) * tr;
-      jx = jx > 1 ? 1 : jx < -1 ? -1 : jx; jy = jy > 1 ? 1 : jy < -1 ? -1 : jy;
-      lkx += jx * 1.5 * dt; lky += jy * dt;
+    // 触控视角：手指位移直接换算为转角（以屏幕短边为基准，不同尺寸手机手感一致）
+    touch.takeLook(touchLook);
+    if (touchLook.x || touchLook.y) {
+      const s = touchSens * 1000 / (innerWidth < innerHeight ? innerWidth : innerHeight);
+      mdx += touchLook.x * s; mdy += touchLook.y * s * 0.85 * (touchInvert ? -1 : 1);
     }
+    if (touchLook.zoom && diver && diver.view !== 1) diver.zoomDist = clamp(diver.zoomDist - touchLook.zoom * 0.02, 2.2, 7.8);
+    // 摇杆明显后拉时取消自动巡游，与键盘 S 一致
+    if (autoSwim && touch.fw < -0.5) autoSwim = false;
     // mouse look through two cascaded low-pass stages
     const kq = 1 - exp(-dt * 30); lkx += mdx * 0.0022; lky += mdy * 0.0022; mdx = 0; mdy = 0;
     const ax = lkx * kq, ay = lky * kq; lkx -= ax; lky -= ay; l2x += ax; l2y += ay;
@@ -655,7 +662,7 @@ function frame(now) {
       diver.targetYaw += dyw + orbitYaw * dt;
       diver.targetPitch = clampLook(diver.targetPitch - dpt + orbitPitch * dt);
       orbitYaw *= exp(-dt * 10.5); orbitPitch *= exp(-dt * 10.5);
-      const analog = { fw: tId >= 0 ? .85 : 0, v: touchDepth, sprint: tN > 1, autoSwim };
+      const analog = { fw: touch.fw, lr: touch.lr, v: touchDepth, sprint: touch.sprint, autoSwim };
       Diver.step(diver, keys, dt, F[TIME], floorLimit, null, undefined, null, analog);
       let [x, y, z] = diver.pos;
       const rad = hypot(x, z);
@@ -671,6 +678,7 @@ function frame(now) {
   }
   if (!menu && !document.hidden && !dead) journal.update(F[CX], F[CY], F[CZ], now);
   render();
+  if (!menu) gameHud.frame();
   if (hud) {
     hN++; if (dtr > hMax) hMax = dtr; if (dtr < hMin) hMin = dtr; if (dtr > hPer * 1.5) { hLate++; hTot++; }
     F[HUDT] += dtr / 1000;
@@ -753,7 +761,7 @@ addEventListener('keyup', e => { delete keys[e.code]; });
 const release = () => {
   for (const key of Object.keys(keys)) delete keys[key];
   drag = null; orbitPitch = orbitYaw = mdx = mdy = lkx = lky = l2x = l2y = 0;
-  touchDepth = tN = 0; tId = -1;
+  touchDepth = 0; touch.reset();
 };
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('pointerdown', e => {
@@ -782,18 +790,30 @@ canvas.addEventListener('wheel',e=>{
   else diver.zoomDist=Math.max(2.2,Math.min(7.8,diver.zoomDist+e.deltaY*.0028));
 },{passive:false});
 addEventListener('blur', release);
-const touch = (e) => {
-  e.preventDefault(); sound(); tN = e.touches.length;
-  let f = null, first = false; for (let i = 0; i < tN; i++) if (e.touches[i].identifier === tId) f = e.touches[i];
-  if (!f) { tId = -1; if (tN) { f = e.touches[0]; tId = f.identifier; first = true; } }
-  if (f) {
-    // the touch axes turn with the page when it lies on its side
-    const x = rot.matches ? f.clientY : f.clientX, y = rot.matches ? -f.clientX : f.clientY, s = 1100 / min(innerWidth, innerHeight);
-    if (first) { tx0 = x; ty0 = y; } else { mdx += (x - tx) * s; mdy += (y - ty) * s; } // the view follows the finger at once
-    tx = x; ty = y;
-  }
-};
-for (const n of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) canvas.addEventListener(n, touch, { passive: false });
+// 触控：只处理落在画布上的手指（changedTouches），按住 HUD 按钮的手指不会被误判为第二指
+const touchPoint = { x: 0, y: 0 };
+function toPage(t) {
+  // 竖屏时页面整体旋转 90°，把屏幕坐标换算回页面坐标
+  if (rot.matches) { touchPoint.x = t.clientY; touchPoint.y = body.clientHeight - t.clientX; }
+  else { touchPoint.x = t.clientX; touchPoint.y = t.clientY; }
+  return touchPoint;
+}
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault(); sound(); document.documentElement.classList.add('touch');
+  if (menu || photo) return;
+  const c = e.changedTouches;
+  for (let i = 0; i < c.length; i++) { const p = toPage(c[i]); touch.start(c[i].identifier, p.x, p.y, body.clientWidth); }
+}, { passive: false });
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  const c = e.changedTouches;
+  for (let i = 0; i < c.length; i++) { const p = toPage(c[i]); touch.move(c[i].identifier, p.x, p.y); }
+}, { passive: false });
+for (const n of ['touchend', 'touchcancel']) canvas.addEventListener(n, (e) => {
+  e.preventDefault();
+  const c = e.changedTouches;
+  for (let i = 0; i < c.length; i++) touch.end(c[i].identifier);
+}, { passive: false });
 
 // ---------------------------------------------------------------- menu
 // The scene keeps rendering (blurred by CSS) behind the menu. Esc, losing the mouse or the corner button open it.
@@ -806,9 +826,8 @@ const ui = (m) => {
   if (m) { release(); setTimeout(() => menu && bDive.focus(), 100); } else document.activeElement.blur();
 };
 const go = () => {
-  sound(); ui(false); bDive.textContent = '继续';
-
-
+  sound(); ui(false); bDive.textContent = '继续潜水';
+  gameHud.dive();
 };
 bDive.addEventListener('click', go); $('o').addEventListener('click', () => ui(true));
 // detail buttons: the current level is lit, the others reload the page with theirs
@@ -829,7 +848,10 @@ lookAt(...POSES[0]);
 diver = Diver.create([F[CX], F[CY], F[CZ]], F[YAW], F[PIT]);
 visitSpot(0);
 const journal = createJournal(POSES, journalStorage);
+const gameHud = createHud(touch);
 $('survey-sonar').addEventListener('click', () => { if (!menu && !photo) sonar(); });
+$('cruise').addEventListener('click', () => { if (!menu && !photo) autoSwim = !autoSwim; });
+$('lamp').addEventListener('click', () => { if (!menu) lamp = !lamp; });
 
 await say('Letting the light in…', 1, 400);
 render(); await Q.onSubmittedWorkDone();
