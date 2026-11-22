@@ -168,12 +168,7 @@ function bindAction(id, available, action) {
   });
 }
 
-// 主入口：关注作者（若可用）并开始体验，直接进入游戏不受影响
-const canFollow = supports('followAuthor');
-onClick('start', () => {
-  if (canFollow) Promise.resolve().then(() => miniTool.followAuthor()).catch(error => console.warn('follow', error));
-  go();
-});
+onClick('start', go);
 
 bindAction('share', supports('share'), () => miniTool.share({ type: 'card' }));
 bindAction('comment', supports('interactionOpenApi'), () => miniTool.interactionOpenApi({

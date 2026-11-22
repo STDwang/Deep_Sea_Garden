@@ -73,9 +73,9 @@ button, select { border-radius: 8px; padding: 7px 10px; box-shadow: none; letter
 #panel { position: absolute; }
 .g #i { top: auto; bottom: 70px; left: 50%; transform: translateX(-50%); }
 
-/* 左上：状态卡 */
+/* 左侧居中：状态卡，避开小工具边缘的系统悬浮控件 */
 .hud-status {
-  position: absolute; top: 10px; left: var(--sl); width: 186px; box-sizing: border-box;
+  position: absolute; top: 50%; left: var(--sl); transform: translateY(-50%); width: 186px; box-sizing: border-box;
   padding: 8px 11px 7px; border-radius: 13px; color: #dff8f2; pointer-events: none;
   background: linear-gradient(160deg, #0a2f3cdd, #04161ec4); border: 1px solid #7ff3ff2e;
   box-shadow: 0 6px 18px #0008; text-shadow: 0 1px 3px #000a;
