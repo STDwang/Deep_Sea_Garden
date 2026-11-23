@@ -26,7 +26,7 @@ fn wor(p: vec3f) -> f32 {
 `;
 
 // ---------------------------------------------------------------- terrain density (compute)
-const W_DENS = W_NOISE + /*wgsl*/`
+const W_DENS = W_NOISE + OUTER_WGSL + /*wgsl*/`
 struct U { n: vec4u, o: vec4f, c: vec4u };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var<storage, read_write> D: array<f32>;
@@ -35,6 +35,7 @@ fn smax(a: f32, b: f32, k: f32) -> f32 { let h = max(k - abs(a - b), 0.) / k; re
 fn smin(a: f32, b: f32, k: f32) -> f32 { return -smax(-a, -b, k); }
 fn seg2(p: vec2f, a: vec2f, b: vec2f) -> f32 { let pa = p - a; let ba = b - a; let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-4), 0., 1.); return length(pa - ba * h); }
 fn seg3(p: vec3f, a: vec3f, b: vec3f) -> f32 { let pa = p - a; let ba = b - a; let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-4), 0., 1.); return length(pa - ba * h); }
+fn angGap(a: f32, b: f32) -> f32 { return abs(atan2(sin(a - b), cos(a - b))); }
 fn dens(p: vec3f) -> f32 {
   let w = vec3f(fbm(p * .04 + 11., 3), fbm(p * .04 + 47., 3), fbm(p * .04 + 83., 3)) - .5;
   let q = p + w * vec3f(15., 6., 15.);
@@ -56,12 +57,24 @@ fn dens(p: vec3f) -> f32 {
     let a = P[kc + i * 2u]; let b = P[kc + i * 2u + 1u];
     clr = max(clr, 1. - ss(0., b.y, seg2(q.xz, a.xy, a.zw) - b.x));
   }
-  let rad = length(p.xz) + w.x * 14.;
+  let rRaw = length(p.xz);
+  let edge = outerEdge(p.xz);
+  let rad = rRaw + w.x * 14.;
+  let ang = atan2(p.z, p.x);
+  // 5 wide natural canyon gateways opening from the core sanctuary into the outer ocean
+  let gE = 1. - ss(.16, .46, angGap(ang, .15));
+  let gNE = 1. - ss(.15, .44, angGap(ang, -.49));
+  let gN = 1. - ss(.16, .44, angGap(ang, -1.57));
+  let gS = 1. - ss(.16, .44, angGap(ang, 1.50));
+  let gW = 1. - ss(.15, .42, angGap(ang, 3.05));
+  let gate = clamp(max(max(max(gE, gNE), max(gN, gS)), gW), 0., 1.);
+  let outerFade = ss(164., 176., edge);
+  let ringHead = ss(154., 164., rad) * (1. - ss(166., 175., edge)) * (1. - gate);
   let n = fbm(vec3f(q.xz * .0125, 1.7), 4);
-  let ring = ss(156., 172., rad);
-  let plat = max(ss(.5, .565, n) * (1. - clr), ring);
-  let th = g0 + plat * mix(26. + 17. * fbm(vec3f(q.xz * .03, 5.), 2), 60., ring);
-  var d = smax(g0 + 4.5 * ss(10., 0., de) - p.y, dm, 3.);
+  let plat = max(ss(.5, .565, n) * (1. - clr) * (1. - outerFade), ringHead);
+  let gFloor = mix(g0, outerHeight(p.xz), outerFade);
+  let th = gFloor + plat * mix(26. + 17. * fbm(vec3f(q.xz * .03, 5.), 2), 40., ringHead);
+  var d = smax(gFloor + 4.5 * ss(10., 0., de) * (1. - outerFade) - p.y, dm, 3.);
   d = smax(d, (th - p.y) * .7, 3.);
   k = u.c.x * 2u;
   for (var i = 0u; i < u.c.y; i++) {
@@ -71,14 +84,16 @@ fn dens(p: vec3f) -> f32 {
     r = vec3f(cs * r.x + sn * r.z, r.y / b.z, -sn * r.x + cs * r.z);
     d = smax(d, b.y - length(vec2f(length(r.xy) - b.x, r.z)), 1.5);
   }
-  let hg = p.y - g0;
-  let rk = mix(.25, 1., ss(.5, 5., hg));
+  let hg = p.y - gFloor;
+  let rk = mix(.25, 1., ss(.5, 5., hg)) * (1. - outerFade * .92);
   d += rk * ((.5 - wor(p * .17 + w * 2.)) * 3.4 + (.5 - wor(p * .41 + 7.)) * 1.3 + (fbm(p * .3, 3) - .5) * 2.2);
   d += rk * 2.2 * (abs(fract(p.y * .21 + w.y * 2.2) - .5) - .25);
   for (var i = 0u; i < u.c.z; i++) {
     let a = P[k]; let b = P[k + 1u]; k += 2u;
     d = smin(d, seg3(p + w * 2., a.xyz, b.xyz) - a.w, 2.);
   }
+  // Smoothly tuck the core voxel seabed underneath the Clipmap before the ±192m box border
+  d -= ss(178., 187., edge) * 6.5;
   return min(d, 3. - p.y);
 }
 @compute @workgroup_size(4, 4, 4) fn main(@builtin(global_invocation_id) id: vec3u) {
@@ -136,15 +151,16 @@ const W_BLIT = W_FS + /*wgsl*/`
 @group(0) @binding(1) var s: sampler;
 fn uvOf(fc: vec4f, k: f32) -> vec2f { return fc.xy * k / vec2f(textureDimensions(t)); }
 @fragment fn fsMip(@builtin(position) fc: vec4f) -> @location(0) vec4f { return textureSampleLevel(t, s, uvOf(fc, 2.), 0.); }
-fn kar(c: vec3f) -> vec4f { let w = 1. / (1. + max(c.r, max(c.g, c.b))); return vec4f(c * w, w); }
+fn safe3(c: vec3f) -> vec3f { return min(select(vec3f(0.), c, c >= vec3f(0.)), vec3f(24.)); }
+fn kar(c: vec3f) -> vec4f { let s = safe3(c); let w = 1. / (1. + max(s.r, max(s.g, s.b))); return vec4f(s * w, w); }
 @fragment fn fsDown0(@builtin(position) fc: vec4f) -> @location(0) vec4f {
   let uv = uvOf(fc, 2.); let e = 1. / vec2f(textureDimensions(t));
-  let a = kar(min(textureSampleLevel(t, s, uv + e * vec2f(-1., -1.), 0.).rgb, vec3f(24.)));
-  let b = kar(min(textureSampleLevel(t, s, uv + e * vec2f(1., -1.), 0.).rgb, vec3f(24.)));
-  let c = kar(min(textureSampleLevel(t, s, uv + e * vec2f(-1., 1.), 0.).rgb, vec3f(24.)));
-  let d = kar(min(textureSampleLevel(t, s, uv + e * vec2f(1., 1.), 0.).rgb, vec3f(24.)));
+  let a = kar(textureSampleLevel(t, s, uv + e * vec2f(-1., -1.), 0.).rgb);
+  let b = kar(textureSampleLevel(t, s, uv + e * vec2f(1., -1.), 0.).rgb);
+  let c = kar(textureSampleLevel(t, s, uv + e * vec2f(-1., 1.), 0.).rgb);
+  let d = kar(textureSampleLevel(t, s, uv + e * vec2f(1., 1.), 0.).rgb);
   let m = a + b + c + d;
-  return vec4f(m.rgb / m.a, 1.);
+  return vec4f(m.rgb / max(m.a, 1e-4), 1.);
 }
 @fragment fn fsDown(@builtin(position) fc: vec4f) -> @location(0) vec4f {
   let uv = uvOf(fc, 2.); let e = 1. / vec2f(textureDimensions(t));
@@ -191,7 +207,7 @@ const WK = array<vec3f, 10>(vec3f(1., 2., 1.), vec3f(-2., 1., .9), vec3f(3., 1.,
 
 // ---------------------------------------------------------------- shared scene code
 const S_G = /*wgsl*/`
-struct G { vp: mat4x4f, sm: mat4x4f, cam: vec4f, right: vec4f, up: vec4f, fwd: vec4f, sun: vec4f, res: vec4f, mis: vec4f, swimmer: vec4f, pulse: vec4f, lamp: vec4f, splash: vec4f };
+struct G { vp: mat4x4f, sm: mat4x4f, cam: vec4f, right: vec4f, up: vec4f, fwd: vec4f, sun: vec4f, res: vec4f, mis: vec4f, swimmer: vec4f, pulse: vec4f, lamp: vec4f, splash: vec4f, sand: vec4f };
 const SIG = vec3f(.058, .0235, .0195);
 const KD = vec3f(.056, .0245, .0170);
 const WCOL = vec3f(.16, .58, .90);
@@ -218,7 +234,7 @@ fn fogIn(ro: vec3f, rd: vec3f, d: f32, z: f32, sun: vec3f) -> vec3f {
 }
 `;
 
-const S_B = S_G + /*wgsl*/`
+const S_B = S_G + OUTER_WGSL + /*wgsl*/`
 @group(0) @binding(0) var<uniform> g: G;
 @group(0) @binding(1) var sR: sampler;
 @group(0) @binding(2) var sC: sampler;
@@ -228,18 +244,26 @@ const S_B = S_G + /*wgsl*/`
 @group(0) @binding(6) var tD: texture_2d<f32>;
 @group(0) @binding(7) var tV: texture_3d<f32>;
 @group(0) @binding(8) var tM: texture_2d<f32>;
+@group(0) @binding(9) var tSand: texture_2d<f32>;
 fn shUV(p: vec3f) -> vec3f { let s = g.sm * vec4f(p, 1.); return vec3f(s.x * .5 + .5, .5 - s.y * .5, s.z - .0007); }
-fn shadow1(p: vec3f) -> f32 { let s = shUV(p); return textureSampleCompareLevel(tSh, sS, s.xy, s.z); }
+fn shFade(s: vec3f) -> f32 { return 1. - ss(.44, .49, max(abs(s.x - .5), abs(s.y - .5))); }
+fn shadow1(p: vec3f) -> f32 {
+  let s = shUV(p);
+  return mix(1., textureSampleCompareLevel(tSh, sS, clamp(s.xy, vec2f(.002), vec2f(.998)), s.z), shFade(s));
+}
 fn shadow4(p: vec3f) -> f32 {
   let s = shUV(p); let e = 1.8 / ${SHADOW}.;
-  return (textureSampleCompareLevel(tSh, sS, s.xy + vec2f(-e, -e), s.z) + textureSampleCompareLevel(tSh, sS, s.xy + vec2f(e, -e), s.z)
-        + textureSampleCompareLevel(tSh, sS, s.xy + vec2f(-e, e), s.z) + textureSampleCompareLevel(tSh, sS, s.xy + vec2f(e, e), s.z)) * .25;
+  let uv = clamp(s.xy, vec2f(.004), vec2f(.996));
+  let v = (textureSampleCompareLevel(tSh, sS, uv + vec2f(-e, -e), s.z) + textureSampleCompareLevel(tSh, sS, uv + vec2f(e, -e), s.z)
+        + textureSampleCompareLevel(tSh, sS, uv + vec2f(-e, e), s.z) + textureSampleCompareLevel(tSh, sS, uv + vec2f(e, e), s.z)) * .25;
+  return mix(1., v, shFade(s));
 }
 fn shadow9(p: vec3f) -> f32 {
   if (LOW) { return shadow1(p); }
   let s = shUV(p); let e = 2.1 / ${SHADOW}.; var a = 0.;
-  for (var x = -1; x <= 1; x++) { for (var y = -1; y <= 1; y++) { a += textureSampleCompareLevel(tSh, sS, s.xy + vec2f(f32(x), f32(y)) * e, s.z); } }
-  return a / 9.;
+  let uv = clamp(s.xy, vec2f(.006), vec2f(.994));
+  for (var x = -1; x <= 1; x++) { for (var y = -1; y <= 1; y++) { a += textureSampleCompareLevel(tSh, sS, uv + vec2f(f32(x), f32(y)) * e, s.z); } }
+  return mix(1., a / 9., shFade(s));
 }
 fn cuv(p: vec3f) -> vec2f { return p.xz - g.sun.xz * (p.y / g.sun.y); }
 fn caus(p: vec3f, d: f32) -> vec3f {
@@ -256,16 +280,34 @@ fn caus2(p: vec3f, d: f32) -> f32 {
   return mix(c, .33, ss(35., 100., d));
 }
 fn sunE(y: f32, z: f32) -> vec3f { return SUNC * exp(kd(z) * (min(y, 0.) / g.sun.y)) * (.5 + .5 * sat(-y / 30.)); }
-fn vol(p: vec3f) -> vec4f { return textureSampleLevel(tV, sC, (p - vec3f(-192., -56., -192.)) / vec3f(384., 60., 384.), 0.); }
+fn vol(p: vec3f) -> vec4f {
+  let blend = ss(162., 176., outerEdge(p.xz));
+  let cv = textureSampleLevel(tV, sC, clamp((p - vec3f(-192., -56., -192.)) / vec3f(384., 60., 384.), vec3f(0.), vec3f(1.)), 0.);
+  if (blend <= .001) { return cv; }
+  return mix(cv, outerVol(p), blend);
+}
+fn groundMap(xz: vec2f) -> vec4f {
+  let blend = ss(162., 176., outerEdge(xz));
+  let cm = textureSampleLevel(tM, sC, clamp(xz / 384. + .5, vec2f(0.), vec2f(1.)), 0.);
+  if (blend <= .001) { return cm; }
+  return mix(cm, outerGroundMap(xz), blend);
+}
+fn sandSample(xz: vec2f) -> vec2f {
+  if (g.sand.w <= .01) { return vec2f(0.); }
+  let d = max(abs(xz.x - g.sand.x), abs(xz.y - g.sand.y));
+  let fade = (1. - ss(19.5, 23.0, d)) * g.sand.w;
+  if (fade <= .001) { return vec2f(0.); }
+  return textureSampleLevel(tSand, sR, fract(xz * g.sand.z), 0.).rg * fade;
+}
 fn amb(p: vec3f, n: vec3f, sky: f32, z: f32) -> vec3f {
   let up = n.y * .5 + .5;
   return mix(vec3f(.22, .60, .80), vec3f(.34, .56, .82), z) * exp(kd(z) * min(p.y, 0.) * 1.2) * (.3 + .7 * sky) * (.24 + .76 * up * up) * 1.3 * (.55 + .45 * sat(-p.y / 30.)) + vec3f(.003, .010, .016);
 }
-fn zone(p: vec3f) -> f32 { return mix(g.sun.w, textureSampleLevel(tM, sC, p.xz / 384. + .5, 0.).b, .2); }
+fn zone(p: vec3f) -> f32 { return mix(g.sun.w, groundMap(p.xz).b, .2); }
 fn side(p: vec3f, n: vec3f, open: f32, z: f32) -> vec3f { return mix(WCOL, PCOL, z) * exp(kd(z) * min(p.y, 0.)) * open * (1. - abs(n.y)) * .7; }
 // skylight at most 150 m along the ray: past that, terrain and the background behind it (vsB) get the same haze
 fn fog(c: vec3f, wp: vec3f, z: f32) -> vec3f {
-  let v = wp - g.cam.xyz; let d = length(v); let rd = v / d;
+  let v = wp - g.cam.xyz; let d = max(length(v), 1e-4); let rd = v / d;
   let lampRay = wp - g.swimmer.xyz;
   let lampDist = max(length(lampRay), .01);
   let beam = ss(.81,.96,dot(lampRay/lampDist,g.lamp.xyz))*g.lamp.w/(1.+.08*lampDist*lampDist);
@@ -288,6 +330,39 @@ struct VO { @builtin(position) cp: vec4f, @location(0) wp: vec3f, @location(1) n
   w.y += sin(g.cam.w * .3 + i.c.y * 40.) * i.c.w;
   o.cp = g.vp * vec4f(w, 1.); o.wp = w; o.n = qrot(i.b, i.n.xyz); o.op = i.p * i.a.w + i.c.y * 37.; o.on = i.n.xyz;
   o.m = i.c; o.q = i.b; o.ao = i.n.w;
+  return o;
+}
+@vertex fn vsClip(@location(0) gp: vec4f) -> VO {
+  var o: VO;
+  let anchor = floor(g.cam.xz / 24. + .5) * 24.;
+  let ring = gp.z;
+  let stepSz = gp.w;
+  let gPos = gp.xy;
+  let ringDist = max(abs(gPos.x), abs(gPos.y));
+  let morph = select(ss(30., 40., ringDist), 0., ring >= 3.5);
+  let odd = fract(abs(gPos) * .5) * 2.;
+  let sgn = select(vec2f(1.), vec2f(-1.), gPos < vec2f(0.));
+  let mPos = gPos - odd * sgn * morph;
+  let wxz = anchor + mPos * stepSz;
+  let edge = outerEdge(wxz);
+  var wy = outerHeight(wxz);
+  let n0 = outerNormal(wxz);
+  // Subtle vertex depression from toroidal sand-trail buffer on flat sandy areas
+  if (g.sand.w > .01 && ring < 1.5) {
+    let sd = sandSample(wxz);
+    let flatMask = ss(.65, .92, n0.y);
+    wy += (sd.y * .14 - sd.x * .22) * flatMask;
+  }
+  // Smoothly tuck Clipmap underneath the core 3D voxel seabed inside edge < 176
+  let tuck = 1. - ss(166., 176., edge);
+  wy -= tuck * 3.2;
+  if (edge < 162.) { wy = -62.; }
+  let w = vec3f(wxz.x, wy, wxz.y);
+  o.cp = g.vp * vec4f(w, 1.);
+  o.wp = w; o.n = n0; o.op = w; o.on = n0;
+  o.m = vec4f(0., 0., 1., 0.);
+  o.q = vec4f(0., 0., 0., 1.);
+  o.ao = 1.;
   return o;
 }
 struct TP { h: f32, c: f32, n: vec3f };
@@ -313,11 +388,12 @@ fn tri(p: vec3f, n: vec3f, s: f32) -> TP {
   var sgro = 0.;
   let sk = textureSample(tD, sR, vec2f((i.op.x + i.op.z) * .33, i.op.y * .035));
   let sk2 = textureSample(tD, sR, vec2f((i.op.x - i.op.z) * 1.1, i.op.y * .11));
-  let gm = textureSample(tM, sC, i.wp.xz / 384. + .5);
+  let gm = groundMap(i.wp.xz);
   let ca = caus(i.wp, dist);
   let hgt = A.h * .5 + B.h * .35 + C.h * .15;
   var bump = 1.7; var gloss = .1; var alb = vec3f(0.); var emi = vec3f(0.); var vao = 1.; var flu = 0.;
   let flt = ss(.72, .93, n0.y);
+  var sandTilt = vec2f(0.);
   if (mat <= 1) {
     // layered rock: grey / olive / brown beds, warm encrustation patches, algae on up-facing parts
     let st = i.op.y * .55 + A.h * 1.6 + big * 5. + big2 * 3.;
@@ -333,11 +409,33 @@ fn tri(p: vec3f, n: vec3f, s: f32) -> TP {
     alb *= (.22 + 1.3 * hgt) * mix(1., .62 + .76 * F.h, fk);
     sgro = -ss(.14, .0, sf) * (1. - abs(on.y)) * 1.2;
     if (mat == 0) {
+      let outerBlend = ss(166., 196., outerEdge(i.wp.xz));
+      if (outerBlend > .001) {
+        let bw = outerBiome(i.wp.xz);
+        // Coral reef warm limestone sand, kelp emerald floor, trench dark basalt mineral crust
+        let coralTint = mix(alb, alb * vec3f(1.24, 1.12, .90) + vec3f(.04, .025, .008), bw.y * .65);
+        let trenchTint = mix(coralTint, coralTint * vec3f(.62, .66, .74) + vec3f(.03, .012, .004) * enc, bw.w * .72);
+        alb = mix(alb, trenchTint, outerBlend);
+      }
       alb = mix(alb, vec3f(.13, .15, .14) * (.55 + .6 * B.h), flt * gm.a * .7);
       let mg = flt * sat(gm.r * 1.5 - .45 + (B.c - .5) * 1.6) * ss(.35, .6, A.h) * ss(-34., -40., i.wp.y);
       alb = mix(alb, vec3f(.20, .02, .12) * (.4 + .9 * B.h), mg * .8);
       flu = mg * .35;
       alb = mix(alb, alb * vec3f(.85, .8, 1.4) + vec3f(.015, .0, .05), gm.b * .8);
+      // Toroidal sand-trail groove shading and normal slope perturbation
+      if (g.sand.w > .01 && flt > .2 && gm.a > .18) {
+        let tr = sandSample(i.wp.xz);
+        let mask = flt * gm.a;
+        if (tr.x + tr.y > .004) {
+          let e = .28;
+          let tx0 = sandSample(i.wp.xz - vec2f(e, 0.)); let tx1 = sandSample(i.wp.xz + vec2f(e, 0.));
+          let tz0 = sandSample(i.wp.xz - vec2f(0., e)); let tz1 = sandSample(i.wp.xz + vec2f(0., e));
+          let h0x = tx0.y * .7 - tx0.x; let h1x = tx1.y * .7 - tx1.x;
+          let h0z = tz0.y * .7 - tz0.x; let h1z = tz1.y * .7 - tz1.x;
+          sandTilt = vec2f(h0x - h1x, h0z - h1z) * 1.8 * mask;
+          alb *= (1. - tr.x * .26 * mask + tr.y * .10 * mask);
+        }
+      }
     }
   } else if (mat == 2) {
     // whale fluke: smooth pale stone with dark streaks running along its length
@@ -366,7 +464,7 @@ fn tri(p: vec3f, n: vec3f, s: f32) -> TP {
     emi = alb * .01; flu = .75; gloss = .25; bump = 1.5;
   }
   let rip = select(0., flt * gm.a * cos((i.wp.x * .8 + i.wp.z * .35) * 5. + A.c * 9.) * .65, mat == 0);
-  let N = normalize(qrot(i.q, normalize(on + (A.n * .85 + B.n * .65 + C.n * .45 * ss(60., 12., dist) + F.n * .5 * fk) * bump + vec3f(.8, sgro, .35) * vec3f(rip, 1., rip))));
+  let N = normalize(qrot(i.q, normalize(on + (A.n * .85 + B.n * .65 + C.n * .45 * ss(60., 12., dist) + F.n * .5 * fk) * bump + vec3f(.8 * rip + sandTilt.x, sgro, .35 * rip + sandTilt.y))));
   let L = g.sun.xyz; let V = normalize(g.cam.xyz - i.wp);
   let v1 = vol(i.wp + n0 * 1.5); let v2 = vol(i.wp + n0 * 4.5);
   let ao = (sat((v1.r - .5) * 8.) * .55 + sat((v2.r - .5) * 2.7) * .45) * vao * ss(.12, .6, hgt);
@@ -944,7 +1042,7 @@ fn quad(i: u32) -> vec2f { return vec2f(f32(i & 1u), f32(i >> 1u)) * 2. - 1.; }
   let lo = fogIn(i.wp, vec3f(0., -1., 0.), 80., z, g.sun.xyz);
   var c = mix(lo, hi, ss(-.5, .8, i.uv.y + rim * .4)) * (.5 + 1.2 * rim) + E * hl * 1.6;
   var al = disc * sat(.03 + rim * rim * rim * .9 + hl);
-  let v = i.wp - g.cam.xyz; let d = length(v);
+  let v = i.wp - g.cam.xyz; let d = max(length(v), 1e-4);
   let T = exp(-SIG.g * d) * ss(1.2, 3., d);
   c = c * T + fogIn(g.cam.xyz, v / d, d, z, g.sun.xyz) * (1. - T);
   al *= mix(.35, 1., T);
@@ -993,7 +1091,7 @@ const W_RAYS = S_G + W_FS + /*wgsl*/`
   let nd = vec2f(uv.x * 2. - 1., 1. - uv.y * 2.);
   let rv = g.fwd.xyz + g.right.xyz * (nd.x * g.right.w) + g.up.xyz * (nd.y * g.up.w);
   let rl = length(rv); let rd = rv / rl;
-  let zl = g.fwd.w / max(dp, 1e-6);
+  let zl = min(g.fwd.w / max(dp, 1e-5), 10000.);
   if (g.cam.y >= 0.) { return vec4f(0.,0.,0.,zl); }
   var tm = min(zl * rl, 120.);
   if (rd.y > 1e-4) { tm = min(tm, -g.cam.y / rd.y); }
@@ -1005,12 +1103,15 @@ const W_RAYS = S_G + W_FS + /*wgsl*/`
     let t = (f32(n) + j) * dt;
     let p = ro + rd * t;
     let s = g.sm * vec4f(p, 1.);
-    let vis = textureSampleCompareLevel(tSh, sS, vec2f(s.x * .5 + .5, .5 - s.y * .5), s.z - .0006);
+    let sUV = vec2f(s.x * .5 + .5, .5 - s.y * .5);
+    let sIn = 1. - ss(.44, .49, max(abs(sUV.x - .5), abs(sUV.y - .5)));
+    let vis = mix(1., textureSampleCompareLevel(tSh, sS, clamp(sUV, vec2f(.002), vec2f(.998)), s.z - .0006), sIn);
     let q = p.xz - sx.xz * (p.y / sx.y);
     let broad = textureSampleLevel(tW, sR, q / 27., 2.5).r;
     let fine = textureSampleLevel(tW, sR, q.yx / 6.9 + .37, 3.).r;
     let pat = ss(.29, .68, broad) * mix(.28, 1., ss(.16, .65, fine));
-    let o = textureSampleLevel(tV, sC, (p - vec3f(-192., -56., -192.)) / vec3f(384., 60., 384.), 0.).r;
+    let oCore = textureSampleLevel(tV, sC, clamp((p - vec3f(-192., -56., -192.)) / vec3f(384., 60., 384.), vec3f(0.), vec3f(1.)), 0.).r;
+    let o = mix(oCore, .85, ss(166., 182., max(abs(p.x), abs(p.z))));
     let mist = sat(1. - (o - .5) * 3.4);
     acc += exp(-sgz * t + k * (p.y / sx.y)) * (vis * (.012 + pat * 6.) * (1. + 1.2 * mist * mist));
   }
@@ -1029,10 +1130,10 @@ const W_RBLUR = W_FS + /*wgsl*/`
   var acc = vec3f(0.); var ws = 0.;
   for (var y = -1; y <= 1; y++) { for (var x = -1; x <= 1; x++) {
     let r = textureLoad(tR, clamp(p + vec2i(x, y) , vec2i(0), mx), 0);
-    let w = 1. / (.03 + abs(r.a - c.a) / c.a);
+    let w = 1. / (.03 + abs(r.a - c.a) / max(c.a, 1e-3));
     acc += r.rgb * w; ws += w;
   } }
-  return vec4f(acc / ws, c.a);
+  return vec4f(acc / max(ws, 1e-4), c.a);
 }
 `;
 
@@ -1049,7 +1150,7 @@ fn sat3(x: vec3f) -> vec3f { return clamp(x, vec3f(0.), vec3f(1.)); }
 @fragment fn fs(@builtin(position) fc: vec4f) -> @location(0) vec4f {
   let px = vec2i(fc.xy);
   let uv = fc.xy * g.res.zw;
-  let zf = g.fwd.w / max(textureLoad(tDp, px, 0), 1e-6);
+  let zf = min(g.fwd.w / max(textureLoad(tDp, px, 0), 1e-5), 10000.);
   // depth-aware upsample of the half-res shafts
   let h = fc.xy * .5 - .5; let b = floor(h); let f = h - b; let bi = vec2i(b);
   let mx = vec2i(textureDimensions(tR)) - 1;
@@ -1058,11 +1159,14 @@ fn sat3(x: vec3f) -> vec3f { return clamp(x, vec3f(0.), vec3f(1.)); }
     let o = vec2i(k & 1, k >> 1);
     let r = textureLoad(tR, clamp(bi + o, vec2i(0), mx), 0);
     let bw = mix(1. - f.x, f.x, f32(o.x)) * mix(1. - f.y, f.y, f32(o.y));
-    let w = (bw + .02) / (.02 + abs(r.a - zf) / zf);
+    let w = (bw + .02) / (.02 + abs(r.a - zf) / max(zf, 1e-3));
     acc += r.rgb * w; ws += w;
   }
-  var c = textureLoad(tS, px, 0).rgb + acc / ws;
-  let bl = textureSampleLevel(tB, sC, uv, 0.).rgb;
+  let s0 = textureLoad(tS, px, 0).rgb;
+  let ray = acc / max(ws, 1e-4);
+  var c = select(vec3f(0.), s0, s0 >= vec3f(0.)) + select(vec3f(0.), ray, ray >= vec3f(0.));
+  let bl0 = textureSampleLevel(tB, sC, uv, 0.).rgb;
+  let bl = select(vec3f(0.), bl0, bl0 >= vec3f(0.));
   c = mix(c, bl, .06) + bl * .03;
   c *= g.mis.x;
   let q = uv - .5;
@@ -1078,3 +1182,45 @@ fn sat3(x: vec3f) -> vec3f { return clamp(x, vec3f(0.), vec3f(1.)); }
   return vec4f(c + n / 255., 1.);
 }
 `;
+
+// ---------------------------------------------------------------- toroidal sand-trail deformation (512^2 RG16F)
+const W_SAND = W_FS + /*wgsl*/`
+struct SU { prevOrig: vec4f, curOrig: vec4f, swimmer: vec4f, dir: vec4f };
+@group(0) @binding(0) var<uniform> su: SU;
+@group(0) @binding(1) var tPrev: texture_2d<f32>;
+@group(0) @binding(2) var sPrev: sampler;
+@fragment fn fs(@builtin(position) fc: vec4f) -> @location(0) vec4f {
+  let dim = vec2f(textureDimensions(tPrev));
+  let uv = fc.xy / dim;
+  let span = su.curOrig.z;
+  // Map toroidal UV back to the unique world XZ inside the current [curOrig - span/2, curOrig + span/2] window
+  let curBase = su.curOrig.xy - vec2f(span * .5);
+  let rel = fract(uv - curBase / span);
+  let wxz = curBase + rel * span;
+  // If this world coordinate was outside the previous toroidal window, clear it cleanly
+  let oldDist = max(abs(wxz.x - su.prevOrig.x), abs(wxz.y - su.prevOrig.y));
+  var val = vec2f(0.);
+  if (su.prevOrig.w > .5 && oldDist < span * .48) {
+    val = textureSampleLevel(tPrev, sPrev, uv, 0.).rg * exp(-su.curOrig.w * .045);
+  }
+  // Stamp soft fin-wake groove + side sand rims when diver swims low over the seabed
+  let clearance = su.swimmer.w;
+  let speed = su.dir.w;
+  if (clearance >= 0. && clearance < 2.8 && speed > 1.1) {
+    let toP = wxz - su.swimmer.xz;
+    let fwd = su.dir.xz;
+    let side = vec2f(-fwd.y, fwd.x);
+    let along = dot(toP, fwd);
+    let across = abs(dot(toP, side));
+    let strength = (1. - smoothstep(.35, 2.8, clearance)) * smoothstep(1.1, 4.5, speed);
+    // Elongated wake capsule behind the fins
+    let wakeEnv = exp(-((along + .55) * (along + .55)) / 1.45);
+    let groove = exp(-(across * across) / .38) * wakeEnv * strength * clamp(su.curOrig.w * 4.5, 0., 1.);
+    let rim = exp(-((across - .92) * (across - .92)) / .22) * wakeEnv * strength * clamp(su.curOrig.w * 3.8, 0., 1.);
+    val.x = min(1., max(val.x, groove * .92));
+    val.y = min(1., max(val.y, rim * .68));
+  }
+  return vec4f(val, 0., 1.);
+}
+`;
+

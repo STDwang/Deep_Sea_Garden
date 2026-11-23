@@ -23,6 +23,9 @@ $('w').hidden = !!navigator.userAgentData; // only Chromium-based browsers have 
 const hasTS = adapter.features.has('timestamp-query');
 const device = await adapter.requestDevice({ requiredFeatures: hasTS ? ['timestamp-query'] : [] });
 device.addEventListener('uncapturederror', (e) => console.error('GPU: ' + e.error.message));
+// 在初始化与首帧渲染期间开启错误作用域，避免移动端 WebGPU 校验失败时静默黑屏
+device.pushErrorScope('out-of-memory');
+device.pushErrorScope('validation');
 // out of memory or a GPU timeout: reload a level lower, or on Low say what happened
 device.lost.then((l) => {
   if (l.reason === 'destroyed') return; // the page is closing
@@ -47,9 +50,13 @@ const tDetail = tex(1024, 1024, 'rgba8unorm', TU.RENDER_ATTACHMENT | TU.TEXTURE_
 const tVol = tex(NX / 2, NY / 2, 'rg8unorm', TU.TEXTURE_BINDING | TU.COPY_DST, { d: NZ / 2 });
 const tMap = tex(512, 512, 'rgba8unorm', TU.TEXTURE_BINDING | TU.COPY_DST);
 
-const UB = new Float32Array(76), UBS = new Float32Array(76);
+const SAND_DIM = LV > 1 ? 256 : 512;
+const tSandA = tex(SAND_DIM, SAND_DIM, 'rg16float', TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING);
+const tSandB = tex(SAND_DIM, SAND_DIM, 'rg16float', TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING);
+const UB = new Float32Array(80), UBS = new Float32Array(80);
 const ubo = device.createBuffer({ size: UB.byteLength, usage: BU.UNIFORM | BU.COPY_DST }), uboS = device.createBuffer({ size: UBS.byteLength, usage: BU.UNIFORM | BU.COPY_DST });
 const WT = new Float32Array(4), uboW = device.createBuffer({ size: 16, usage: BU.UNIFORM | BU.COPY_DST });
+const SU = new Float32Array(16), uboSand = device.createBuffer({ size: 64, usage: BU.UNIFORM | BU.COPY_DST });
 
 const VF = SS.VERTEX | SS.FRAGMENT;
 const bgl0 = device.createBindGroupLayout({ entries: [
@@ -57,12 +64,13 @@ const bgl0 = device.createBindGroupLayout({ entries: [
   { binding: 1, visibility: VF, sampler: {} }, { binding: 2, visibility: VF, sampler: {} }, { binding: 3, visibility: VF, sampler: { type: 'comparison' } },
   { binding: 4, visibility: VF, texture: { sampleType: 'depth' } },
   { binding: 5, visibility: VF, texture: {} }, { binding: 6, visibility: VF, texture: {} },
-  { binding: 7, visibility: VF, texture: { viewDimension: '3d' } }, { binding: 8, visibility: VF, texture: {} }] });
-const mkBG0 = (u, sh) => device.createBindGroup({ layout: bgl0, entries: [
+  { binding: 7, visibility: VF, texture: { viewDimension: '3d' } }, { binding: 8, visibility: VF, texture: {} },
+  { binding: 9, visibility: VF, texture: {} }] });
+const mkBG0 = (u, sh, ts) => device.createBindGroup({ layout: bgl0, entries: [
   { binding: 0, resource: { buffer: u } }, { binding: 1, resource: sRep }, { binding: 2, resource: sClamp }, { binding: 3, resource: sCmp },
   { binding: 4, resource: sh.createView() }, { binding: 5, resource: tWater.createView() }, { binding: 6, resource: tDetail.createView() },
-  { binding: 7, resource: tVol.createView() }, { binding: 8, resource: tMap.createView() }] });
-const bg0 = mkBG0(ubo, tShadow), bg0s = mkBG0(uboS, tDummy);
+  { binding: 7, resource: tVol.createView() }, { binding: 8, resource: tMap.createView() }, { binding: 9, resource: ts.createView() }] });
+const bg0A = mkBG0(ubo, tShadow, tSandA), bg0B = mkBG0(ubo, tShadow, tSandB), bg0s = mkBG0(uboS, tDummy, tSandA);
 const pl0 = device.createPipelineLayout({ bindGroupLayouts: [bgl0] });
 
 const bglBlit = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: SS.FRAGMENT, texture: {} }, { binding: 1, visibility: SS.FRAGMENT, sampler: {} }] });
@@ -96,6 +104,8 @@ const shadowPipe = (m, vsE, buffers, o = {}) => device.createRenderPipeline({ la
 await say('Compiling shaders…', 0.05, 300);
 const mSolid = mod(W_SOLID), mLeaf = mod(W_LEAF), mAnim = mod(W_ANIM), mSurf = mod(W_SURF), mSpr = mod(W_SPR);
 const pTerrain = scenePipe(mSolid, 'vs', 'fs', [vbSolid, ibSolid], { cull: 'back' });
+const vbClipLayout = { arrayStride: 16, attributes: [A(0, 0, 'float32x4')] };
+const pClipmap = scenePipe(mSolid, 'vsClip', 'fs', [vbClipLayout], { cull: 'back' });
 const pSolid = scenePipe(mSolid, 'vs', 'fs', [vbSolid, ibSolid]);
 const pLeaf = scenePipe(mLeaf, 'vs', 'fs', [ibLeaf], { strip: true, constants: { ROWS: 9 } });
 const pLeaf5 = scenePipe(mLeaf, 'vs', 'fs', [ibLeaf], { strip: true, constants: { ROWS: 5 } });
@@ -112,7 +122,7 @@ const diverParticleLayout = { arrayStride: 48, stepMode: 'instance',
 const pWake = scenePipe(mSpr,'vsWake','fsWake',[diverParticleLayout],{strip:true,blend:ADD});
 const pJelly = scenePipe(mAnim, 'vsJelly', 'fsJelly', [vbSolid, ibAnim], { blend: ADD });
 const pSnow = scenePipe(mSpr, 'vsSnow', 'fsSnow', [ibSnow], { strip: true, blend: ADD });
-const pGl = scenePipe(mLeaf, 'vsGl', 'fsGl', [ibBub], { strip: true, blend: ADD, constants: { ROWS: 7 } });
+const pGl = scenePipe(mLeaf, 'vsGl', 'fsGl', [ibBub], { strip: true, blend: ADD });
 const pSolidSh = shadowPipe(mSolid, 'vs', [vbSolid, ibSolid]), pTerrSh = shadowPipe(mSolid, 'vs', [vbSolid, ibSolid], { cull: 'front' });
 const pLeafSh = shadowPipe(mLeaf, 'vs', [ibLeaf], { strip: true, constants: { ROWS: 3 } });
 
@@ -140,6 +150,19 @@ const bgWater = device.createBindGroup({ layout: pWater.getBindGroupLayout(0), e
 const waterViews = [0, 1, 2, 3, 4].map((m) => tWater.createView({ baseMipLevel: m, mipLevelCount: 1 }));
 const waterBG = waterViews.map((v) => blitBG(v));
 const waterPass = waterViews.map((v) => ({ colorAttachments: [colorAtt(v, true)] }));
+
+const mSand = mod(W_SAND);
+const pSand = device.createRenderPipeline({ layout: 'auto', vertex: { module: mSand, entryPoint: 'vs' }, fragment: { module: mSand, entryPoint: 'fs', targets: [{ format: 'rg16float' }] } });
+const sandViews = [tSandA.createView(), tSandB.createView()];
+const bgSand = [0, 1].map((i) => device.createBindGroup({ layout: pSand.getBindGroupLayout(0), entries: [
+  { binding: 0, resource: { buffer: uboSand } }, { binding: 1, resource: sandViews[i] }, { binding: 2, resource: sRep }] }));
+const sandPass = [0, 1].map((i) => ({ colorAttachments: [colorAtt(sandViews[i], false)] }));
+{
+  const e = device.createCommandEncoder();
+  for (let i = 0; i < 2; i++) e.beginRenderPass({ colorAttachments: [colorAtt(sandViews[i], true)] }).end();
+  Q.submit([e.finish()]);
+}
+let sandFlip = 0, sandInit = false, sandPrevX = 0, sandPrevZ = 0, sandLastT = 0;
 
 const mRays = mod(W_RAYS), mPost = mod(W_POST), mRB = mod(W_RBLUR);
 const pRB = device.createRenderPipeline({ layout: 'auto', vertex: { module: mRB, entryPoint: 'vs' }, fragment: { module: mRB, entryPoint: 'fs', targets: [{ format: HDR }] } });
@@ -192,7 +215,7 @@ let D;
 }
 // Distance to the rock for collide(), in 1/127 m (> 0 in rock, clamped to ±1 m), kept only in the 4x4x4-voxel
 // bricks near the surface within the camera's reach (~2 MB). CI per brick: 0 all water, 1 all rock, n brick n-2 in CG.
-const SWIM_RADIUS = 174;
+const SWIM_RADIUS = OUTER_SWIM_RADIUS;
 const CO = 8, CN = 124, CI = new Uint32Array(CN * CN * NY / 4);
 let CG = new Int8Array(64 * 65534);
 {
@@ -296,16 +319,26 @@ for (const p of POSES) flyPts.push([p[0], -40, p[2]]);
 await say('正在种植海藻…', 0.73, 2500);
 const Wd = makeWorld(D, T, flyPts, POSES);
 for (const p of POSES) p[1] += Wd.gy(p[0], p[2]);
-// Keep a coarse seabed map for locating currents after releasing the generator.
+// Index 8 mirrors the whale fluke for the return-home journal entry; indices 9..12 are the 4 outer-ocean wonders.
+POSES.push(POSES[0].slice());
+for (const lm of OUTER_LANDMARKS) {
+  const gy = outerHeight(lm.x, lm.z);
+  POSES.push([lm.x + lm.lookOff[0], gy + lm.lookOff[1], lm.z + lm.lookOff[2], lm.x, gy + lm.archR * 0.55, lm.z]);
+}
+// Keep a coarse seabed map for locating currents after releasing the generator, seamlessly blended into outerHeight().
 const currentBed = Float32Array.from({length: 47 * 47}, (_,i) =>
   Wd.gy((i % 47 - 23) * 8, (Math.floor(i / 47) - 23) * 8));
 function currentBedHeight(x,z) {
+  const edge = outerEdge(x, z);
+  if (edge >= 178) return outerHeight(x, z);
   const gx=clamp(x/8+23,0,46), gz=clamp(z/8+23,0,46);
   const ix=min(45,floor(gx)), iz=min(45,floor(gz));
   const i=iz*47+ix;
   const near=mix(currentBed[i],currentBed[i+1],gx-ix);
   const far=mix(currentBed[i+47],currentBed[i+48],gx-ix);
-  return mix(near,far,gz-iz);
+  const coreH = mix(near,far,gz-iz);
+  if (edge <= 166) return coreH;
+  return mix(coreH, outerHeight(x, z), sstep(166, 178, edge));
 }
 D = Wd.gy = T.smp = null; // with gy goes the generator's working memory (about 200 MB)
 
@@ -321,7 +354,8 @@ meshes.push(meshFluke(), meshShip().build(), meshManta().build(), meshFish().bui
   meshChunk(3).build(), meshChunk(11).build(), meshChunk(29).build(), meshChunk(5, 3).build(), meshChunk(17, 3).build(), meshChunk(41, 3).build(), meshChunk(9, 1).build(), meshCoral(0, 1).build(), meshCoral(1, 1).build(), meshChunk(5, 2, 1).build(), meshChunk(17, 2, 1).build(), meshChunk(41, 2, 1).build());
 const TURTLE = meshTurtle().build();
 const JELLY = meshJelly().build();
-meshes.push(TURTLE, JELLY);
+const OUTER_ARCH = meshOuterArch().build();
+meshes.push(TURTLE, JELLY, OUTER_ARCH);
 // center xyz, patrol radius, initial angle, angular speed, body scale, padding
 const turtles = new Float32Array([
   -.5, -38, .5, 6, -1.32, .146, 2.2, 0,
@@ -352,6 +386,30 @@ const ibFish = buf(Wd.fish, BU.VERTEX), ibManta = buf(Wd.mantas, BU.VERTEX), ibB
 const ibGl = buf(Wd.glints, BU.VERTEX), nGl = Wd.glints.length / 8;
 const nFish = Wd.fish.length / 8, nManta = Wd.mantas.length / 8, nBub = Wd.bubbles.length / 8, nSnow = Wd.snow.length / 4;
 const MANTA = meshes[12], FISH = meshes[13];
+const clipMesh = buildClipmapMesh();
+const vbClip = buf(clipMesh.vb, BU.VERTEX), ibClip = buf(clipMesh.ib, BU.INDEX);
+const outerStream = createOuterStreamer();
+const ibOuterArch = buf(outerStream.archBuf, BU.VERTEX);
+const ibOuterRock = outerStream.rockBufs.map((a) => device.createBuffer({ size: a.byteLength, usage: BU.VERTEX | BU.COPY_DST }));
+const ibOuterProp = outerStream.propBufs.map((a) => device.createBuffer({ size: a.byteLength, usage: BU.VERTEX | BU.COPY_DST }));
+const ibOuterLeaf = device.createBuffer({ size: outerStream.leafBuf.byteLength, usage: BU.VERTEX | BU.COPY_DST });
+const ibOuterFish = device.createBuffer({ size: outerStream.fishBuf.byteLength, usage: BU.VERTEX | BU.COPY_DST });
+const ibOuterTurtle = device.createBuffer({ size: outerStream.turtleBuf.byteLength, usage: BU.VERTEX | BU.COPY_DST });
+const ibOuterManta = device.createBuffer({ size: outerStream.mantaBuf.byteLength, usage: BU.VERTEX | BU.COPY_DST });
+const ibOuterJelly = device.createBuffer({ size: outerStream.jellyBuf.byteLength, usage: BU.VERTEX | BU.COPY_DST });
+const ibOuterBub = device.createBuffer({ size: outerStream.bubbleBuf.byteLength, usage: BU.VERTEX | BU.COPY_DST });
+function uploadOuterStream() {
+  if (!outerStream.dirty) return;
+  for (let i = 0; i < 2; i++) if (outerStream.rockCounts[i]) Q.writeBuffer(ibOuterRock[i], 0, outerStream.rockBufs[i], 0, outerStream.rockCounts[i] * 12);
+  for (let i = 0; i < 4; i++) if (outerStream.propCounts[i]) Q.writeBuffer(ibOuterProp[i], 0, outerStream.propBufs[i], 0, outerStream.propCounts[i] * 12);
+  if (outerStream.leafCount) Q.writeBuffer(ibOuterLeaf, 0, outerStream.leafBuf, 0, outerStream.leafCount * 36);
+  if (outerStream.fishCount) Q.writeBuffer(ibOuterFish, 0, outerStream.fishBuf, 0, outerStream.fishCount * 8);
+  if (outerStream.turtleCount) Q.writeBuffer(ibOuterTurtle, 0, outerStream.turtleBuf, 0, outerStream.turtleCount * 8);
+  if (outerStream.mantaCount) Q.writeBuffer(ibOuterManta, 0, outerStream.mantaBuf, 0, outerStream.mantaCount * 8);
+  if (outerStream.jellyCount) Q.writeBuffer(ibOuterJelly, 0, outerStream.jellyBuf, 0, outerStream.jellyCount * 8);
+  if (outerStream.bubbleCount) Q.writeBuffer(ibOuterBub, 0, outerStream.bubbleBuf, 0, outerStream.bubbleCount * 8);
+  outerStream.clearDirty();
+}
 Q.writeTexture({ texture: tVol }, Wd.volD, { bytesPerRow: NX, rowsPerImage: NY / 2 }, [NX / 2, NY / 2, NZ / 2]);
 Q.writeTexture({ texture: tMap }, Wd.gm, { bytesPerRow: 2048 }, [512, 512]);
 
@@ -386,7 +444,8 @@ Wd.glints = Wd.volD = Wd.gm = T.vb = T.ib = T.wp = T.wn = 0;
 // ---------------------------------------------------------------- render targets (rebuilt on resize)
 // The scene is drawn at `pix` pixels and scaled up to the window. frame() tunes it and the draw distance scale `det`
 // for 60 fps.
-const PIXMAX = 410000, PIXMIN = 250000, DETMIN = 0.4;
+let PIXMAX = 410000;
+const PIXMIN = 250000, DETMIN = 0.4;
 let W = 0, H = 0, DW = 0, DH = 0, pix = PIXMAX, det = 1, dynN = 0, dynT = 0, dynG = 0, dynGN = 0, dynBad = 0, dynOk = 0, dynWait = 3;
 let passScene, passRays, passBlur, bgBlur, passPost, bgRays, bgPost, bloomPass = [], bloomBG = [], targets = [];
 const NB = 6;
@@ -499,16 +558,23 @@ function render() {
   m[36] = rx; m[37] = 0; m[38] = rz; m[39] = TANH * asp;
   m[40] = ux; m[41] = uy; m[42] = uz; m[43] = TANH;
   m[44] = fx; m[45] = fy; m[46] = fz; m[47] = NEAR;
-  const zx = cx - PURPLE[0], zz = cz - PURPLE[1]; let zt = (44 - sqrt(zx * zx + zz * zz)) / 18; zt = zt < 0 ? 0 : zt > 1 ? 1 : zt;
-  m[51] = zt * zt * (3 - 2 * zt);
+  m[51] = outerPurpleZone(cx, cz);
   let ek = (-cy - 8) / 26; ek = ek < 0 ? 0 : ek > 1 ? 1 : ek;
   m[56] = EXPO * (0.6 + 0.4 * ek); m[57] = RAYS; m[58] = det;
   m[60] = F[CX]; m[61] = F[CY]; m[62] = F[CZ]; m[63] = menu ? 0 : 1;
   m.set(pulsePos,64); m[67] = F[TIME]-pulseTime;
   m[68]=sin(diver.yaw)*cos(diver.pitch); m[69]=sin(diver.pitch); m[70]=-cos(diver.yaw)*cos(diver.pitch); m[71]=Number(lamp);
   m.set(splashPos,72); m[75]=F[TIME]-splashTime;
+  const powerSave = PIXMAX <= PIXMIN;
+  const sandActive = !powerSave;
+  const sandCenterX = diver ? diver.pos[0] : cx;
+  const sandCenterZ = diver ? diver.pos[2] : cz;
+  m[76] = sandCenterX; m[77] = sandCenterZ; m[78] = 1 / SAND_SIZE; m[79] = sandActive ? 1 : 0;
   Q.writeBuffer(ubo, 0, UB);
   WT[0] = F[TIME]; Q.writeBuffer(uboW, 0, WT);
+
+  // Update toroidal outer-ocean ecological instance pools when crossing 24m cell boundaries
+  if (outerStream.update(cx, cz, det, powerSave)) uploadOuterStream();
 
   { let cr = floor((cz - OZ) / CELLW) | 0; cr = cr < 0 ? 0 : cr > CELLS - 1 ? CELLS - 1 : cr; let n = 0; rowOrd[n++] = cr; for (let d = 1; d < CELLS; d++) { if (cr - d >= 0) rowOrd[n++] = cr - d; if (cr + d < CELLS) rowOrd[n++] = cr + d; } }
   const e = device.createCommandEncoder();
@@ -519,14 +585,53 @@ function render() {
   // animated water texture + mips
   let r = e.beginRenderPass(waterPass[0]); r.setPipeline(pWater); r.setBindGroup(0, bgWater); r.draw(3); r.end();
   for (let i = 1; i < 5; i++) { r = e.beginRenderPass(waterPass[i]); r.setPipeline(pMip16); r.setBindGroup(0, waterBG[i - 1]); r.draw(3); r.end(); }
+  // toroidal sand-trail deformation ping-pong pass (disabled in power-saving mode)
+  if (sandActive && diver) {
+    const sdt = clamp(F[TIME] - sandLastT, 0, 0.1);
+    sandLastT = F[TIME];
+    const bedY = currentBedHeight(diver.pos[0], diver.pos[2]);
+    const clear = diver.airborne ? 99 : (diver.pos[1] - bedY);
+    const fxD = sin(diver.yaw), fzD = -cos(diver.yaw);
+    SU[0] = sandPrevX; SU[1] = sandPrevZ; SU[2] = SAND_SIZE; SU[3] = sandInit ? 1 : 0;
+    SU[4] = sandCenterX; SU[5] = sandCenterZ; SU[6] = SAND_SIZE; SU[7] = sdt;
+    SU[8] = diver.pos[0]; SU[9] = diver.pos[1]; SU[10] = diver.pos[2]; SU[11] = clear;
+    SU[12] = fxD; SU[13] = 0; SU[14] = fzD; SU[15] = diver.speed || 0;
+    Q.writeBuffer(uboSand, 0, SU);
+    const nextFlip = 1 - sandFlip;
+    r = e.beginRenderPass(sandPass[nextFlip]);
+    r.setPipeline(pSand); r.setBindGroup(0, bgSand[sandFlip]); r.draw(3); r.end();
+    sandFlip = nextFlip;
+    sandPrevX = sandCenterX; sandPrevZ = sandCenterZ; sandInit = true;
+  }
+  const curBg0 = sandFlip ? bg0B : bg0A;
   // scene
   r = e.beginRenderPass(passScene);
-  r.setBindGroup(0, bg0);
+  r.setBindGroup(0, curBg0);
   if (cy < 0) {
     r.setPipeline(pTerrain); r.setVertexBuffer(0, vbTerrain); r.setVertexBuffer(1, ibSolids); r.setIndexBuffer(ibTerrain, 'uint32');
     drawCells(r, T.start, T.lo, T.hi, 1.5, 1, 0, 0, 240);
+    // 5-ring Geometry Clipmap extending seamless seabed to 1000m+ in 1 draw call
+    r.setPipeline(pClipmap); r.setVertexBuffer(0, vbClip); r.setIndexBuffer(ibClip, 'uint32');
+    r.drawIndexed(clipMesh.ni);
     r.setPipeline(pSolid); r.setVertexBuffer(0, vbMesh); r.setIndexBuffer(ibMesh, 'uint32');
+    r.setVertexBuffer(1, ibSolids);
     for (let i = 0; i < 12; i++) { const g = Wd.solids.ranges[i]; if (g[1]) r.drawIndexed(meshes[i].ib.length, g[1], meshes[i].i0, meshes[i].v0, g[0]); }
+    // Outer-ocean stone arches (landmarks & reef gateways)
+    if (outerStream.archCount) {
+      r.setVertexBuffer(1, ibOuterArch);
+      r.drawIndexed(OUTER_ARCH.ib.length, outerStream.archCount, OUTER_ARCH.i0, OUTER_ARCH.v0, 0);
+    }
+    // Streamed outer-ocean boulders, sponges & corals
+    const outerRockMesh = [meshes[14], meshes[17]];
+    for (let i = 0; i < 2; i++) if (outerStream.rockCounts[i]) {
+      r.setVertexBuffer(1, ibOuterRock[i]);
+      r.drawIndexed(outerRockMesh[i].ib.length, outerStream.rockCounts[i], outerRockMesh[i].i0, outerRockMesh[i].v0, 0);
+    }
+    const outerPropMesh = [meshes[4], meshes[9], LV > 1 ? meshes[21] : meshes[7], LV > 1 ? meshes[22] : meshes[8]];
+    for (let i = 0; i < 4; i++) if (outerStream.propCounts[i]) {
+      r.setVertexBuffer(1, ibOuterProp[i]);
+      r.drawIndexed(outerPropMesh[i].ib.length, outerStream.propCounts[i], outerPropMesh[i].i0, outerPropMesh[i].v0, 0);
+    }
     for (let i = 0; i < NCHUNK; i++) {
       const c = Wd.chunks[i], big = i > 2 && i < 6; r.setVertexBuffer(1, ibChunk[i]);
       drawCells(r, c.start, c.lo, c.hi, 3, meshes[14 + i], 0, 0, i > 5 ? 30 : big ? 40 : 96);
@@ -538,11 +643,15 @@ function render() {
       if (lod) drawCells(r, Wd.props[i].start, Wd.props[i].lo, Wd.props[i].hi, 3, meshes[18 + i], 0, 6, 110);
     }
     r.setPipeline(pManta); r.setVertexBuffer(1, ibManta); r.drawIndexed(MANTA.ib.length, nManta, MANTA.i0, MANTA.v0, 0);
+    if (outerStream.mantaCount) { r.setVertexBuffer(1, ibOuterManta); r.drawIndexed(MANTA.ib.length, outerStream.mantaCount, MANTA.i0, MANTA.v0, 0); }
     r.setPipeline(pTurtle); r.setVertexBuffer(1, ibTurtle); r.drawIndexed(TURTLE.ib.length, turtles.length / 8, TURTLE.i0, TURTLE.v0, 0);
+    if (outerStream.turtleCount) { r.setVertexBuffer(1, ibOuterTurtle); r.drawIndexed(TURTLE.ib.length, outerStream.turtleCount, TURTLE.i0, TURTLE.v0, 0); }
     r.setPipeline(pFish); r.setVertexBuffer(1, ibFish); r.drawIndexed(FISH.ib.length, nFish, FISH.i0, FISH.v0, 0);
+    if (outerStream.fishCount) { r.setVertexBuffer(1, ibOuterFish); r.drawIndexed(FISH.ib.length, outerStream.fishCount, FISH.i0, FISH.v0, 0); }
     // kelp and plants: 9-row blades up close, 5 rows mid-range, a decimated set far away
     r.setPipeline(pLeaf); r.setVertexBuffer(0, ibBig); drawCells(r, Wd.big.start, Wd.big.lo, Wd.big.hi, 5, false, 18, 0, 24);
     r.setPipeline(pLeaf5); drawCells(r, Wd.big.start, Wd.big.lo, Wd.big.hi, 5, false, 10, 24, 58);
+    if (outerStream.leafCount) { r.setVertexBuffer(0, ibOuterLeaf); r.draw(10, outerStream.leafCount); }
     r.setPipeline(pLeafF); r.setVertexBuffer(0, ibBigF); drawCells(r, Wd.bigF.start, Wd.bigF.lo, Wd.bigF.hi, 5, false, 6, 58, 150);
     r.setPipeline(pLeafS); r.setVertexBuffer(0, ibSmall); drawCells(r, Wd.small.start, Wd.small.lo, Wd.small.hi, 1.5, false, 6, 0, 70);
   }
@@ -551,6 +660,7 @@ function render() {
   r.setPipeline(pBack); r.draw(4);
   if (cy < 0) {
     r.setPipeline(pBub); r.setVertexBuffer(0, ibBubbles); r.draw(4, nBub);
+    if (outerStream.bubbleCount) { r.setVertexBuffer(0, ibOuterBub); r.draw(4, outerStream.bubbleCount); }
     r.setPipeline(pGl); r.setVertexBuffer(0, ibGl); r.draw(4, nGl);
     r.setPipeline(pSnow); r.setVertexBuffer(0, ibSnowB); r.draw(4, nSnow);
   }
@@ -573,6 +683,7 @@ function render() {
   if (cy < 0) {
     r.setPipeline(pJelly); r.setVertexBuffer(0, vbMesh); r.setIndexBuffer(ibMesh, 'uint32'); r.setVertexBuffer(1, ibJelly);
     r.drawIndexed(JELLY.ib.length, jellies.length / 8, JELLY.i0, JELLY.v0, 0);
+    if (outerStream.jellyCount) { r.setVertexBuffer(1, ibOuterJelly); r.drawIndexed(JELLY.ib.length, outerStream.jellyCount, JELLY.i0, JELLY.v0, 0); }
   }
   r.end();
   // light shafts
@@ -596,11 +707,17 @@ function render() {
 const CE = new Float64Array([0, 0, 0, .375, 0, 0, -.375, 0, 0, 0, .375, 0, 0, -.375, 0, 0, 0, .375, 0, 0, -.375]), CS = new Float64Array(7);
 const cv = (x, y, z) => { const b = CI[(x >> 2) + CN * ((y >> 2) + NY / 4 * (z >> 2))]; return b > 1 ? CG[b * 64 - 128 + (x & 3) + 4 * (y & 3) + 16 * (z & 3)] : b * 254 - 127; };
 function rockDistance(px,py,pz) {
-  if (py >= 0 || py < OY) return -1;
-  const x = (px - OX) / VS - CO, y = (py - OY) / VS, z = (pz - OZ) / VS - CO;
+  if (py >= 0 || py < OY - 2) return -1;
+  const edge = outerEdge(px, pz);
+  if (edge >= 178) return outerSdf(px, py, pz);
+  const maxC = CN * 4 - 2;
+  const x = clamp((px - OX) / VS - CO, 0, maxC), y = clamp((py - OY) / VS, 0, NY - 2), z = clamp((pz - OZ) / VS - CO, 0, maxC);
   const ix = x | 0, iy = y | 0, iz = z | 0, u = x - ix, v = y - iy, a = cv(ix, iy, iz), b = cv(ix, iy + 1, iz), c = cv(ix, iy, iz + 1), d = cv(ix, iy + 1, iz + 1);
   const p = a + (cv(ix + 1, iy, iz) - a) * u, q = b + (cv(ix + 1, iy + 1, iz) - b) * u, r = c + (cv(ix + 1, iy, iz + 1) - c) * u, s = d + (cv(ix + 1, iy + 1, iz + 1) - d) * u;
-  const e = p + (q - p) * v; return (e + (r + (s - r) * v - e) * (z - iz)) / 127;
+  const e = p + (q - p) * v;
+  const coreD = (e + (r + (s - r) * v - e) * (z - iz)) / 127;
+  if (edge <= 166) return coreD;
+  return mix(coreD, outerSdf(px, py, pz), sstep(166, 178, edge));
 }
 function sd(j) { CS[j] = rockDistance(F[CX]+CE[3*j], F[CY]+CE[3*j+1], F[CZ]+CE[3*j+2]); }
 // Moves the camera by F[MX..MZ] in steps shorter than its radius CR (so it can't pass through thin rock), pushing it
@@ -666,8 +783,22 @@ function frame(now) {
       Diver.step(diver, keys, dt, F[TIME], floorLimit, null, undefined, null, analog);
       let [x, y, z] = diver.pos;
       const rad = hypot(x, z);
-      if (rad > SWIM_RADIUS) { x *= SWIM_RADIUS / rad; z *= SWIM_RADIUS / rad; }
-      y = max(-52, min(8, y));
+      if (rad > OUTER_PUSH_START) {
+        // Gentle perimeter ocean current smoothly guides the diver back from the far abyss
+        const push = sstep(OUTER_PUSH_START, SWIM_RADIUS, rad);
+        const ix = x / rad, iz = z / rad;
+        const nudge = push * dt * 8.5;
+        x -= ix * nudge; z -= iz * nudge;
+        diver.velocity[0] -= ix * push * dt * 6;
+        diver.velocity[2] -= iz * push * dt * 6;
+        if (rad > OUTER_PUSH_START + 20 && now - lastEdgeNotice > 6000) {
+          lastEdgeNotice = now;
+          journal.notify('前方为深海外缘海流，已顺流折返', now, 3000);
+        }
+        const rad2 = hypot(x, z);
+        if (rad2 > SWIM_RADIUS) { x *= SWIM_RADIUS / rad2; z *= SWIM_RADIUS / rad2; }
+      }
+      y = max(-54, min(8, y));
       F[MX] = x - F[CX]; F[MY] = y - F[CY]; F[MZ] = z - F[CZ];
       F[VX] = diver.velocity[0]; F[VY] = diver.velocity[1]; F[VZ] = diver.velocity[2];
       collide();
@@ -688,7 +819,8 @@ function frame(now) {
 
 // ---------------------------------------------------------------- input
 const keys = Object.create(null);
-const floorLimit = () => -53; // Cave ceilings and floors are resolved by collide().
+const floorLimit = () => -55; // Cave ceilings, core floors, and outer seabed are resolved by collide().
+let lastEdgeNotice = -1e9;
 const camera = { pos: [0,0,0] };
 let orbitYaw = 0, orbitPitch = 0, drag = null, autoSwim = false, photo = false;
 let lamp = false, pulseTime = -100, pulsePos = [0,0,0];
@@ -841,7 +973,7 @@ function visitSpot(index) {
   diver.velocity.fill(0);
   diver.yaw = diver.goalYaw = diver.targetYaw = F[YAW];
   diver.pitch = diver.goalPitch = diver.targetPitch = F[PIT];
-  diverParticles.live.clear(); diver.airborne = false; autoSwim = false; photo = false; release(); follow(0);
+  diverParticles.live.clear(); diver.airborne = false; autoSwim = false; photo = false; sandInit = false; release(); follow(0);
 }
 
 lookAt(...POSES[0]);
@@ -855,5 +987,7 @@ $('lamp').addEventListener('click', () => { if (!menu) lamp = !lamp; });
 
 await say('Letting the light in…', 1, 400);
 render(); await Q.onSubmittedWorkDone();
+const [valErr, oomErr] = await Promise.all([device.popErrorScope(), device.popErrorScope()]);
+if (valErr || oomErr) fail('当前设备渲染初始化异常，请刷新重试。' + ((valErr || oomErr).message ? ` (${(valErr || oomErr).message.slice(0, 120)})` : ''));
 ui(true);
 requestAnimationFrame((t) => { F[LAST] = t; requestAnimationFrame(frame); });

@@ -96,9 +96,10 @@ $('quality').addEventListener('change', () => {
   resize();
 });
 POSES.forEach((pose, index) => {
+  if (index === 8 || !journalSpots[index]) return;
   const option = document.createElement('option');
   option.value = String(index);
-  option.textContent = journalSpots[index][0];
+  option.textContent = (index >= 9 ? '远海 · ' : '') + journalSpots[index][0];
   $('spot').appendChild(option);
 });
 $('spot').addEventListener('change', event => {

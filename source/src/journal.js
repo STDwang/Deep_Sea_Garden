@@ -9,6 +9,10 @@ const journalSpots = [
   ['潮门测站', '已取得单拱回声。', '从沉船继续向东，寻找独立石拱。'],
   ['双环测站', '已取得双拱回声。', '从潮门向北游，寻找并列石拱。'],
   ['回声海图', '两份声学样本已在石鲸尾归档。', '完成两站采样后，回到石鲸尾发出声呐。'],
+  ['翠渊巨藻塔', '外海巨藻环抱高耸石拱，翠绿光瀑倾泻而下。', '穿出东北双环测站，驶入翠光巨藻深渊。'],
+  ['暖礁双拱台', '暖光珊瑚阶梯层叠铺开，巨拱横跨礁台之上。', '穿过东侧潮门测站，向东南寻找浅水珊瑚礁台。'],
+  ['幽渊荧光盆', '深紫微光在广袤海盆间流动，水母群于环礁起舞。', '穿出南侧紫光洞窟，驶向西南方荧光深盆。'],
+  ['玄岩热泉门', '漆黑玄岩巨拱矗立海沟之上，热泉气泡连绵升腾。', '穿出西侧海绵峡谷，向西北方深邃海沟潜行。'],
 ];
 
 function createJournal(poses, storage) {
@@ -23,6 +27,11 @@ function createJournal(poses, storage) {
   const goal = { index: -1, name: '', x: 0, y: 0, z: 0, locked: false, label: '', found: 0, total: journalSpots.length, version: 0 };
   let lockedIndex = -1;
   const surveyNext = () => [6, 7, 8].find(i => !found.has(i));
+  const exploreIndices = () => {
+    const out = [0, 1, 2, 3, 4, 5];
+    for (let i = 9; i < journalSpots.length && i < poses.length; i++) out.push(i);
+    return out;
+  };
 
   /** 重新计算当前目标与任务栏文案 */
   function refreshGoal(pos) {
@@ -34,14 +43,14 @@ function createJournal(poses, storage) {
       goal.name = target === 8 ? '返航石鲸尾' : journalSpots[target][0];
       goal.label = `外海测绘 ${step}/3 · ${goal.name}`;
     } else {
-      const rest = [0, 1, 2, 3, 4, 5].filter(i => !found.has(i));
-      if (!rest.length) { goal.name = ''; goal.label = '全部地点已记录 · 自由潜游'; }
+      const rest = exploreIndices().filter(i => !found.has(i));
+      if (!rest.length) { goal.name = ''; goal.label = '全部海域已记录 · 无尽深海畅游'; }
       else {
-        // 测绘完成后，声呐改为寻找最近的未记录地点
+        // 测绘完成后，声呐改为寻找最近的未记录地点（含远海奇观）
         if (lockedIndex >= 0 && rest.includes(lockedIndex)) index = lockedIndex;
         else if (pos) index = rest.reduce((a, b) => Math.hypot(poses[a][0] - pos[0], poses[a][2] - pos[2]) <= Math.hypot(poses[b][0] - pos[0], poses[b][2] - pos[2]) ? a : b);
         goal.name = index >= 0 ? journalSpots[index][0] : '';
-        goal.label = `自由探索 · 还有 ${rest.length} 处未记录`;
+        goal.label = `远海探索 · 还有 ${rest.length} 处未记录`;
       }
     }
     goal.index = index;
@@ -100,51 +109,59 @@ function createJournal(poses, storage) {
 
   return {
     goal,
-    scan(pos,yaw,now) {
-      const target=surveyNext();
-      if(target===undefined) {
-        // 测绘已完成：声呐锁定最近的未记录地点
-        lockedIndex=-1;
+    notify(message, now, ms = 3200) {
+      notice.textContent = message;
+      hideAt = now + ms;
+    },
+    scan(pos, yaw, now) {
+      const target = surveyNext();
+      if (target === undefined) {
+        // 测绘已完成：声呐锁定最近的未记录地点（核心区 + 远海奇观）
+        lockedIndex = -1;
         refreshGoal(pos);
-        if(goal.index<0) notice.textContent='外海测绘已完成 · 六处地点均已记录';
+        if (goal.index < 0) notice.textContent = '全海域测绘已完成 · 全部奇观均已记录';
         else {
-          lockedIndex=goal.index; refreshGoal(pos);
-          const dx=goal.x-pos[0], dz=goal.z-pos[2];
-          notice.textContent='最近未记录 · '+goal.name+' · '+bearing(dx,dz,yaw)+' '+Math.round(Math.hypot(dx,goal.y-pos[1],dz))+' 米';
+          lockedIndex = goal.index; refreshGoal(pos);
+          const dx = goal.x - pos[0], dy = goal.y - pos[1], dz = goal.z - pos[2];
+          notice.textContent = '最近未记录 · ' + goal.name + ' · ' + bearing(dx, dz, yaw) + ' ' + Math.round(Math.hypot(dx, dy, dz)) + ' 米' + (Math.abs(dy) > 6 ? (dy > 0 ? ' · 上浮' : ' · 下潜') : '');
         }
       } else {
-        const [x,y,z]=poses[target===8?0:target];
-        const dx=x-pos[0], dy=y-pos[1], dz=z-pos[2];
-        const distance=Math.hypot(dx,dy,dz);
-        if(distance<=12) {
+        const [x, y, z] = poses[target === 8 ? 0 : target];
+        const dx = x - pos[0], dy = y - pos[1], dz = z - pos[2];
+        const distance = Math.hypot(dx, dy, dz);
+        if (distance <= 12) {
           found.add(target);
           // 采样成功后自动锁定下一站，罗盘直接给出方向
-          const next=surveyNext(); lockedIndex=next===undefined?-1:next;
+          const next = surveyNext(); lockedIndex = next === undefined ? -1 : next;
           refresh();
           save();
-          notice.textContent=target===8?'测绘完成 · 获得回声海图':journalSpots[target][0]+'采样成功 · 下一站已标在罗盘上';
+          notice.textContent = target === 8 ? '测绘完成 · 获得回声海图，可向远海奇观进发' : journalSpots[target][0] + '采样成功 · 下一站已标在罗盘上';
         } else {
-          lockedIndex=target; refreshGoal(pos);
-          notice.textContent=(target===8?'返航石鲸尾':journalSpots[target][0])+' · '+bearing(dx,dz,yaw)+' '+Math.round(distance)+' 米'+(Math.abs(dy)>5?(dy>0?' · 上浮':' · 下潜'):'');
+          lockedIndex = target; refreshGoal(pos);
+          notice.textContent = (target === 8 ? '返航石鲸尾' : journalSpots[target][0]) + ' · ' + bearing(dx, dz, yaw) + ' ' + Math.round(distance) + ' 米' + (Math.abs(dy) > 5 ? (dy > 0 ? ' · 上浮' : ' · 下潜') : '');
         }
       }
-      hideAt=now+4500;
+      hideAt = now + 4500;
     },
     update(x, y, z, now) {
       if (now < nextCheck) return;
       nextCheck = now + 200;
       if (now >= hideAt && notice.textContent) notice.textContent = '';
-      for (let i = 0; i < 6; i++) {
+      for (const i of exploreIndices()) {
         const [px, py, pz] = poses[i];
-        if (found.has(i) || Math.hypot(x - px, y - py, z - pz) > 10) continue;
+        const radius = i >= 9 ? 18 : 10;
+        if (found.has(i) || Math.hypot(x - px, y - py, z - pz) > radius) continue;
         found.add(i);
         if (lockedIndex === i) lockedIndex = -1;
         refresh();
-        notice.textContent = `已记录 ${journalSpots[i][0]} · 发出声呐寻找测站`;
-        hideAt = now + 3400;
+        notice.textContent = i >= 9
+          ? `已发现远海奇观 · ${journalSpots[i][0]}`
+          : `已记录 ${journalSpots[i][0]} · 发出声呐寻找测站`;
+        hideAt = now + 3600;
         save();
         break;
       }
     },
   };
 }
+
