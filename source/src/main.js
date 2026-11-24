@@ -15,13 +15,41 @@ const say = (m, to, ms) => {
   // go on once the animation runs: one not started before the thread gets busy stays stuck (timer: hidden tabs)
   return new Promise((r) => { a.ready.then(() => setTimeout(r)); setTimeout(r, document.hidden ? 0 : 1e3); });
 };
-const fail = (m) => { throw new Error(m, { cause: 1 }); }; // cause marks a message that is shown as it is
-if (!navigator.gpu) fail('当前小红书容器无法启动 WebGPU 场景。');
-const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-if (!adapter) fail('未找到 WebGPU 适配器。');
+const fail = (m) => {
+  body.className = 'l e';
+  $('s').textContent = m;
+  $('w').hidden = false;
+  $('w').textContent = '请在支持 WebGPU 的 HTTPS 容器或新版桌面浏览器中打开；iOS / 小程序内核若不支持，请升级容器或返回桌面端预览。';
+  $('retry').hidden = false;
+  throw new Error(m, { cause: 1 });
+}; // cause marks a message that is shown as it is
+$('retry').addEventListener('click', () => location.reload());
+if (!navigator.gpu) {
+  fail(!window.isSecureContext
+    ? '无法启动：当前页面不是安全连接。请使用 HTTPS 或本机预览。'
+    : '无法启动：当前浏览器或小红书容器未开启 WebGPU。');
+}
+let adapter;
+try {
+  adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+} catch (error) {
+  adapter = null;
+}
+// Some browsers reject a high-performance preference while still exposing a usable default adapter.
+if (!adapter) {
+  try { adapter = await navigator.gpu.requestAdapter(); }
+  catch (error) { adapter = null; }
+}
+if (!adapter) fail('未找到可用的 WebGPU 适配器，请确认显卡加速已开启。');
 $('w').hidden = !!navigator.userAgentData; // only Chromium-based browsers have it
 const hasTS = adapter.features.has('timestamp-query');
-const device = await adapter.requestDevice({ requiredFeatures: hasTS ? ['timestamp-query'] : [] });
+let device;
+try {
+  device = await adapter.requestDevice({ requiredFeatures: hasTS ? ['timestamp-query'] : [] });
+} catch (error) {
+  try { device = await adapter.requestDevice(); }
+  catch (fallbackError) { fail('无法启动：显卡不支持当前版本的 WebGPU 渲染设备。'); }
+}
 device.addEventListener('uncapturederror', (e) => console.error('GPU: ' + e.error.message));
 // 在初始化与首帧渲染期间开启错误作用域，避免移动端 WebGPU 校验失败时静默黑屏
 device.pushErrorScope('out-of-memory');
@@ -29,9 +57,11 @@ device.pushErrorScope('validation');
 // out of memory or a GPU timeout: reload a level lower, or on Low say what happened
 device.lost.then((l) => {
   if (l.reason === 'destroyed') return; // the page is closing
-  dead = body.className = 'l e'; $('s').textContent = '显卡设备已丢失，请刷新页面重试。';
+  dead = body.className = 'l e'; $('s').textContent = '显卡设备已丢失，请刷新页面重试。'; $('retry').hidden = false;
 });
-const ctx = canvas.getContext('webgpu'), FMT = navigator.gpu.getPreferredCanvasFormat();
+const ctx = canvas.getContext('webgpu');
+if (!ctx) fail('无法启动：当前容器未能创建 WebGPU 画布上下文。');
+const FMT = navigator.gpu.getPreferredCanvasFormat();
 const Q = device.queue, HDR = 'rgba16float', DEPTH = 'depth32float';
 const TU = GPUTextureUsage, BU = GPUBufferUsage, SS = GPUShaderStage;
 
@@ -859,6 +889,30 @@ function sonar() {
   diverParticles.burst(pulsePos,2,14,2.8,F[TIME]);
   journal.scan(diver.pos,diver.targetYaw,performance.now());
   pingSonar();
+
+  // 声呐环境共鸣扫描：检查视线方向 140 米内是否有大型奇迹与地标
+  if (typeof POSES !== 'undefined') {
+    const fwdX = Math.sin(diver.targetYaw), fwdZ = -Math.cos(diver.targetYaw);
+    let closestLm = null, minD = 1e9;
+    for (let i = 0; i < POSES.length; i++) {
+      if (!journalSpots[i]) continue;
+      const p = POSES[i];
+      const dx = p[0] - diver.pos[0], dz = p[2] - diver.pos[2];
+      const dist = Math.hypot(dx, dz);
+      if (dist > 12 && dist < 140) {
+        const dot = (dx * fwdX + dz * fwdZ) / dist;
+        if (dot > 0.65 && dist < minD) {
+          minD = dist;
+          closestLm = journalSpots[i][0];
+        }
+      }
+    }
+    if (closestLm) {
+      const delay = Math.max(0.18, Math.min(0.72, minD * 0.005));
+      pingResonance(delay, 460 - minD * 1.5);
+      journal.notify(`【${closestLm}】捕获声学回波共鸣 · 距约 ${Math.round(minD)} 米`, performance.now(), 3200);
+    }
+  }
 }
 function movePhoto(dt) {
   const axis = (a,b) => Number(a.some(k=>keys[k])) - Number(b.some(k=>keys[k]));
@@ -867,9 +921,52 @@ function movePhoto(dt) {
   const d = dt * (keys.ShiftLeft || keys.ShiftRight ? 4.6 : 1.8);
   RC[0] += d * (F[FX]*fw + F[RX]*lr); RC[1] += d * (F[FY]*fw + up); RC[2] += d * (F[FZ]*fw + F[RZ]*lr);
 }
+let lastCardDataUrl = '';
+function collectPhotoTargets() {
+  const creatures = [];
+  if (typeof turtles !== 'undefined') {
+    for (let i = 0; i < turtles.length; i += 8) {
+      const t = turtles, a = t[i + 4] + F[TIME] * t[i + 5];
+      creatures.push({ name: '巡游海龟', x: t[i] + Math.cos(a) * t[i + 3], y: t[i + 1], z: t[i + 2] + Math.sin(a) * t[i + 3] });
+    }
+  }
+  if (typeof jellies !== 'undefined') {
+    for (let i = 0; i < jellies.length; i += 8) {
+      const j = jellies, a = j[i + 4] + F[TIME] * j[i + 5];
+      creatures.push({ name: '幽光水母', x: j[i] + Math.cos(a) * j[i + 3], y: j[i + 1] + Math.sin(F[TIME] * 0.4 + i) * 1.5, z: j[i + 2] + Math.sin(a) * j[i + 3] });
+    }
+  }
+  if (typeof Wd !== 'undefined' && Wd.mantas) {
+    for (let i = 0; i < Wd.mantas.length; i += 8) {
+      const m = Wd.mantas, a = m[i + 4] + F[TIME] * m[i + 5];
+      creatures.push({ name: '深渊蝠鲼', x: m[i] + Math.cos(a) * m[i + 3], y: m[i + 1], z: m[i + 2] + Math.sin(a) * m[i + 3] });
+    }
+  }
+  if (diver && (photo || diver.view !== 1)) {
+    creatures.push({ name: '潜水探险家', x: diver.pos[0], y: diver.pos[1], z: diver.pos[2] });
+  }
+  const landmarks = [];
+  if (typeof POSES !== 'undefined') {
+    POSES.forEach((p, idx) => {
+      if (journalSpots[idx]) landmarks.push({ name: journalSpots[idx][0], x: p[0], y: p[1], z: p[2] });
+    });
+  }
+  return { creatures, landmarks };
+}
 function takePhoto() {
   render();
-  const a = document.createElement('a'); a.download = '深海潜水员.png'; a.href = canvas.toDataURL(); a.click();
+  const targets = collectPhotoTargets();
+  const info = analyzePhotoSubject(RC, [F[FX], F[FY], F[FZ]], targets);
+  const cardUrl = createPolaroidCard(canvas, info);
+  lastCardDataUrl = cardUrl;
+
+  const modal = $('photo-modal');
+  const img = $('photo-preview-img');
+  if (modal && img && cardUrl) {
+    img.src = cardUrl;
+    modal.hidden = false;
+  }
+  journal.notify(`【${info.name}】${info.ratingLabel} · 已生成科考拍立得`, performance.now(), 4500);
 }
 addEventListener('keydown', e => {
   if (['INPUT','TEXTAREA'].includes(e.target.tagName) || menu && !['KeyH','KeyM'].includes(e.code)) return;
@@ -984,6 +1081,7 @@ const gameHud = createHud(touch);
 $('survey-sonar').addEventListener('click', () => { if (!menu && !photo) sonar(); });
 $('cruise').addEventListener('click', () => { if (!menu && !photo) autoSwim = !autoSwim; });
 $('lamp').addEventListener('click', () => { if (!menu) lamp = !lamp; });
+$('hud-photo').addEventListener('click', () => { if (!menu) takePhoto(); });
 
 await say('Letting the light in…', 1, 400);
 render(); await Q.onSubmittedWorkDone();

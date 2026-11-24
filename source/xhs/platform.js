@@ -261,3 +261,35 @@ bindAction('rank', canRank, () => {
 });
 onClick('refresh-rank', loadRanks);
 onClick('more-ranks', () => { shownRanks += 5; renderRanks(); });
+
+// 拍立得照片弹窗交互
+onClick('close-photo', () => { $('photo-modal').hidden = true; });
+onClick('download-photo', () => {
+  if (!lastCardDataUrl) return;
+  if (supports('saveImageToPhotosAlbum')) {
+    miniTool.saveImageToPhotosAlbum({
+      filePath: lastCardDataUrl,
+      success: () => journal.notify('拍立得已保存至系统相册！', performance.now(), 3500),
+      fail: () => journal.notify('保存至相册失败，请检查相册权限。', performance.now(), 3500),
+    });
+  } else {
+    const a = document.createElement('a');
+    a.download = '深海潜水员-科考拍立得.png';
+    a.href = lastCardDataUrl;
+    a.click();
+    journal.notify('拍立得照片已下载！', performance.now(), 3500);
+  }
+});
+onClick('share-photo-card', () => {
+  if (supports('postNote')) {
+    miniTool.postNote({
+      title: '我在「深海潜水员」完成了一次深海科考！',
+      content: '穿梭于巨藻塔与万年沉船，拍下了这张珍贵的深海拍立得。',
+      images: lastCardDataUrl ? [lastCardDataUrl] : [],
+    });
+  } else if (supports('share')) {
+    miniTool.share({ type: 'card' });
+  } else {
+    journal.notify('当前环境暂不支持直接发笔记，请先保存照片。', performance.now(), 3500);
+  }
+});

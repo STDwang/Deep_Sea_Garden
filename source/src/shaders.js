@@ -301,7 +301,8 @@ fn sandSample(xz: vec2f) -> vec2f {
 }
 fn amb(p: vec3f, n: vec3f, sky: f32, z: f32) -> vec3f {
   let up = n.y * .5 + .5;
-  return mix(vec3f(.22, .60, .80), vec3f(.34, .56, .82), z) * exp(kd(z) * min(p.y, 0.) * 1.2) * (.3 + .7 * sky) * (.24 + .76 * up * up) * 1.3 * (.55 + .45 * sat(-p.y / 30.)) + vec3f(.003, .010, .016);
+  let abyssDamp = exp(min(p.y + 28., 0.) * .038);
+  return mix(vec3f(.22, .60, .80), vec3f(.34, .56, .82), z) * exp(kd(z) * min(p.y, 0.) * 1.2) * (.3 + .7 * sky) * (.24 + .76 * up * up) * 1.3 * (.55 + .45 * sat(-p.y / 30.)) * abyssDamp + vec3f(.003, .010, .016);
 }
 fn zone(p: vec3f) -> f32 { return mix(g.sun.w, groundMap(p.xz).b, .2); }
 fn side(p: vec3f, n: vec3f, open: f32, z: f32) -> vec3f { return mix(WCOL, PCOL, z) * exp(kd(z) * min(p.y, 0.)) * open * (1. - abs(n.y)) * .7; }
@@ -310,7 +311,8 @@ fn fog(c: vec3f, wp: vec3f, z: f32) -> vec3f {
   let v = wp - g.cam.xyz; let d = max(length(v), 1e-4); let rd = v / d;
   let lampRay = wp - g.swimmer.xyz;
   let lampDist = max(length(lampRay), .01);
-  let beam = ss(.81,.96,dot(lampRay/lampDist,g.lamp.xyz))*g.lamp.w/(1.+.08*lampDist*lampDist);
+  let depthBoost = 1. + clamp(-g.swimmer.y * .022, 0., 1.4);
+  let beam = ss(.81,.96,dot(lampRay/lampDist,g.lamp.xyz))*g.lamp.w*depthBoost/(1.+.08*lampDist*lampDist);
   let ring = max(0.,1.-abs(distance(wp,g.pulse.xyz)-g.pulse.w*13.)/.9)*ss(4.,2.,g.pulse.w);
   return (c*(1.+beam*3.) + vec3f(.03,.14,.12)*beam + vec3f(.06,.8,.9)*ring) * exp(-sg(z) * d) * ss(230., 185., d) + fogIn(g.cam.xyz, rd, d, z, g.sun.xyz) * (.58 + .42 * vol(g.cam.xyz + rd * min(d, 150.)).g);
 }

@@ -81,3 +81,16 @@ function pingSonar() {
   gain.gain.exponentialRampToValueAtTime(.001,t+.7);
   tone.connect(gain); gain.connect(OUT); tone.start(t); tone.stop(t+.72);
 }
+
+function pingResonance(delay = 0.36, pitch = 440) {
+  if (!OUT || muted || !AC) return;
+  const t = AC.currentTime + delay;
+  const osc = AC.createOscillator(), g = AC.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(pitch, t);
+  osc.frequency.exponentialRampToValueAtTime(pitch * 0.72, t + 1.1);
+  g.gain.setValueAtTime(0.001, t);
+  g.gain.linearRampToValueAtTime(0.08, t + 0.06);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 1.15);
+  osc.connect(g); g.connect(OUT); osc.start(t); osc.stop(t + 1.2);
+}

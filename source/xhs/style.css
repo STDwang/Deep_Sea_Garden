@@ -262,3 +262,30 @@ button, select { border-radius: 8px; padding: 7px 10px; box-shadow: none; letter
   #m { padding-left: 14%; }
 }
 
+/* ===== 拍立得快照弹窗 ===== */
+#photo-modal {
+  position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+  background: rgba(3, 19, 28, 0.82); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  padding: 16px; box-sizing: border-box;
+}
+.polaroid-wrapper {
+  position: relative; max-width: min(88vw, 420px); max-height: 92vh; display: flex; flex-direction: column;
+  align-items: center; gap: 12px;
+}
+#photo-preview-img {
+  max-width: 100%; max-height: calc(88vh - 60px); object-fit: contain;
+  border-radius: 6px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.15);
+}
+.photo-modal-foot { display: flex; gap: 12px; width: 100%; justify-content: center; }
+.photo-modal-foot button {
+  padding: 8px 18px; border-radius: 20px; font-weight: 800; font-size: 13px; border: none; cursor: pointer;
+}
+#download-photo { background: #9ff4ff; color: #052a33; box-shadow: 0 4px 14px rgba(20, 169, 196, 0.4); }
+#share-photo-card { background: #ff2442; color: #fff; box-shadow: 0 4px 14px rgba(255, 36, 66, 0.4); }
+#close-photo {
+  position: absolute; top: -14px; right: -14px; width: 34px; height: 34px; border-radius: 50%;
+  background: #0b3a4d; border: 1px solid #7ff3ff66; color: #fff; font-size: 16px; font-weight: 900;
+  display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 12px #0008;
+}
+
+

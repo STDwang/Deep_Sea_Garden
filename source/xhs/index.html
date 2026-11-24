@@ -52,6 +52,13 @@ p { margin: 0; }
   height: .5em; margin: .4em 0 1em; overflow: hidden; border-radius: 1em; background: #03131c;
   box-shadow: 0 0 0 2px #7ff3ff80, 0 0 1.5em #14a9c4;
 }
+#retry {
+  width: auto; min-height: 44px; margin: 1em auto 0; padding: .65em 1.2em;
+  border: 1px solid #9ff6ff; border-radius: 999px;
+  background: #082733e6; color: #dffcff; box-shadow: 0 8px 22px #001a1e99;
+  font-size: .9em; letter-spacing: .08em;
+}
+.e #retry { display: flex; }
 #b {
   display: block; height: 100%; background: linear-gradient(90deg, #14a9c4, #9ff6ff);
   transform: scaleX(0); transform-origin: 0; will-change: transform;
@@ -127,7 +134,7 @@ button:active, a:active { transform: translateY(.1em); filter: brightness(.9); }
 <div id="m">
   <section class="dock" aria-label="深海潜水员">
     <h1>深海潜水员</h1>
-    <div id="l"><div id="p"><i id="b"></i></div><p id="s">正在准备海底世界…</p><p id="w" hidden></p></div>
+    <div id="l"><div id="p"><i id="b"></i></div><p id="s">正在准备海底世界…</p><p id="w" hidden></p><button id="retry" type="button" hidden>重新检测</button></div>
     <div id="g">
       <button id="start">开始潜水</button>
       <button id="d" class="enter">直接进入游戏</button>
@@ -178,6 +185,7 @@ button:active, a:active { transform: translateY(.1em); filter: brightness(.9); }
   </div>
   <div id="stream-chip" hidden>乘上洋流 · 顺流加速</div>
   <div class="hud-corner">
+    <button id="hud-photo" type="button" aria-label="拍照">📷</button>
     <button id="view" type="button" aria-label="切换第一人称" aria-pressed="false">跟随</button>
     <button id="o" type="button" aria-label="打开菜单">☰</button>
   </div>
@@ -199,6 +207,16 @@ button:active, a:active { transform: translateY(.1em); filter: brightness(.9); }
   </div>
 </div>
 <small class="credit">Abyssal Garden · Noniv / Maksymilian Dendra · MIT</small>
+<div id="photo-modal" hidden aria-label="快照预览">
+  <div class="polaroid-wrapper">
+    <button id="close-photo" type="button" aria-label="关闭预览">✕</button>
+    <img id="photo-preview-img" alt="深海快照">
+    <div class="photo-modal-foot">
+      <button id="download-photo" type="button">保存照片</button>
+      <button id="share-photo-card" type="button">发布笔记</button>
+    </div>
+  </div>
+</div>
 <aside id="panel" hidden aria-label="潜水记录">
   <header><h2 id="panel-title"></h2><button id="close-panel">收起</button></header>
   <p id="panel-status" role="status"></p>
