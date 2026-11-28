@@ -30,17 +30,8 @@ if (!navigator.gpu) {
     : '无法启动：当前浏览器或小红书容器未开启 WebGPU。');
 }
 let adapter;
-try {
-  adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-} catch (error) {
-  adapter = null;
-}
-// Some browsers reject a high-performance preference while still exposing a usable default adapter.
-if (!adapter) {
-  try { adapter = await navigator.gpu.requestAdapter(); }
-  catch (error) { adapter = null; }
-}
-if (!adapter) fail('未找到可用的 WebGPU 适配器，请确认显卡加速已开启。');
+adapter = await requestGpuAdapter(navigator.gpu);
+if (!adapter) fail('未找到可用的 WebGPU 适配器。请开启浏览器硬件加速或更新小红书/系统，仍无效时该机型暂不支持本画面。');
 $('w').hidden = !!navigator.userAgentData; // only Chromium-based browsers have it
 const hasTS = adapter.features.has('timestamp-query');
 let device;
